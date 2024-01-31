@@ -159,13 +159,8 @@ def VerifyAggregate(aggsig, pm_aggd):
         R_values.append(Ri)
         r_values.append(ri)
 
-        # TODO: BIP-style
         # Let ei = int(hashBIP0340/challenge(bytes(ri) || pki || mi)) mod n
-        # ei = int_from_bytes(hashBIP0340_challenge(ri, bytes_from_point(pki), mi)) % n
-        # e_values.append(ei)
-
-        # hacspec-style
-        ei = int_from_bytes(hashBIP0340_challenge(ri, bytes_from_point(Pi), mi)) % n
+        ei = int_from_bytes(hashBIP0340_challenge(ri, pki, mi)) % n
         e_values.append(ei)
 
         # If i = 0:
