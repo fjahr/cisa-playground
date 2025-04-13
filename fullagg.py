@@ -53,6 +53,9 @@ NonceHash = int
 # Signer challenge
 # "c_i"
 SignerChallenge = int
+# Tweak
+# "τ"
+Tweak = int
 
 
 def Sign() -> Tuple[SignerOutput, SignerState]:
@@ -171,34 +174,64 @@ def Ver(L: SignersList, sig: Signature) -> bool:
     return lhs == rhs
 
 
+def TweakSK(x: SecretKey, t: Tweak) -> SecretKey:
+    return (x + t) % n
+
+
+def TweakPK(X: PublicKey, t: Tweak) -> PublicKey:
+    T = point_mul(G, t)
+    return point_add(X, T)
+
+
+def DahLIAS(signers: List[Tuple[SecretKey, PublicKey, Message]]) -> Signature:
+    # First signing round
+    first_round = []
+    for _ in signers:
+        out_i, st_i = Sign()
+        first_round.append((out_i, st_i))
+
+    # First coordinator round
+    signer_triples = []
+    for i, (_, pk_i, m_i) in enumerate(signers):
+        out_i = first_round[i][0]
+        signer_triples.append((pk_i, m_i, out_i))
+    ctx, R = Coord(signer_triples)
+
+    # Second signing round
+    s_list = []
+    for i, (sk_i, _, m_i) in enumerate(signers):
+        st_i = first_round[i][1]
+        s_i = Sign2(sk_i, st_i, m_i, ctx)
+        s_list.append(s_i)
+
+    # Second coordinator round
+    sig = Coord2(R, s_list)
+
+    return sig
+
+
 def test_fullagg_scheme():
     sk1, sk2, sk3 = secrets.randbelow(n-1) + 1, secrets.randbelow(n-1) + 1, secrets.randbelow(n-1) + 1
     pk1, pk2, pk3 = point_mul(G, sk1), point_mul(G, sk2), point_mul(G, sk3)
     m1, m2, m3 = b"jonas", b"tim", b"yannick"
 
-    # First signing round
-    out1, st1 = Sign()
-    out2, st2 = Sign()
-    out3, st3 = Sign()
-
-    # First coordinator round
-    signer_triples = [(pk1, m1, out1), (pk2, m2, out2), (pk3, m3, out3)]
-    ctx, R = Coord(signer_triples)
-
-    # Second signing round
-    s1 = Sign2(sk1, st1, m1, ctx)
-    s2 = Sign2(sk2, st2, m2, ctx)
-    s3 = Sign2(sk3, st3, m3, ctx)
-
-    # Second coordinator round
-    sig = Coord2(R, [s1, s2, s3])
-
-    # Verification success
-    L = [(pk1, m1), (pk2, m2), (pk3, m3)]
+    # DahLIAS round
+    signers = [(sk1, pk1, m1), (sk2, pk2, m2), (sk3, pk3, m3)]
+    sig = DahLIAS(signers)
+    L = [(pk, m) for _, pk, m in signers]
     valid = Ver(L, sig)
     assert valid
 
-    # Verification failures
+    # DahLIAS round with tweaking
+    tweaks = [secrets.randbelow(n-1) + 1, secrets.randbelow(n-1) + 1, secrets.randbelow(n-1) + 1]
+    tweaked_signers = [(TweakSK(sk, tweaks[i]), TweakPK(pk, tweaks[i]), m) for i, (sk, pk, m) in enumerate(signers)]
+    signers2 = signers + tweaked_signers
+    sig2 = DahLIAS(signers2)
+    L2 = [(pk, m) for _, pk, m in signers2]
+    valid = Ver(L2, sig2)
+    assert valid
+
+    # Failure cases
     fail_vectors = [
         ([(pk1, m1), (pk1, m2), (pk3, m3)], sig),  # pk2 wrong
         ([(pk1, m1), (pk1, m2), (pk3, b'')], sig),  # m3 wrong
