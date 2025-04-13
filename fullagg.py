@@ -3,7 +3,6 @@ from typing import (
     Tuple,
 )
 import secrets
-import random
 
 from secp256k1lab.secp256k1 import (
     G,
@@ -58,9 +57,21 @@ SignerChallenge = Scalar
 Tweak = Scalar
 
 
+def _rand_int() -> int:
+    return secrets.randbelow(n-1) + 1
+
+
+def _rand_scalar() -> Scalar:
+    return Scalar(_rand_int())
+
+
 def Sign() -> Tuple[SignerOutput, SignerState]:
-    r1_i = secrets.randbelow(n-1) + 1
-    r2_i = secrets.randbelow(n-1) + 1
+    """Signer i generates their secret nonces r1_i and r2_i and computes the
+    public nonces R1_i and R2_i from them. Then they store state st_i and send
+    out_i to the coordinator."""
+
+    r1_i = _rand_scalar()
+    r2_i = _rand_scalar()
     R1_i = r1_i * G
     R2_i = r2_i * G
 
@@ -71,7 +82,7 @@ def Sign() -> Tuple[SignerOutput, SignerState]:
 
 
 def hash_nonce(ctx: Context) -> NonceHash:
-    """ Hnon """
+    """ (aka Hnon) """
     R1, R2, signer_triples = ctx
 
     data = R1.to_bytes_xonly() + R2.to_bytes_xonly()
@@ -83,6 +94,13 @@ def hash_nonce(ctx: Context) -> NonceHash:
 
 
 def Coord(signer_inputs: List[Tuple[PublicKey, Message, SignerOutput]]) -> Tuple[Context, PublicNonce]:
+    """Given all signers’ public key (pk), message (m) and first round output
+    (out), the coordinator computes R1 and R2 by summing up all the signers'
+    R1_i and R2_i. Then they define the context (ctx) and calculate the nonce
+    hash (b). Using b they calculate R. The value R is the “common” nonce that
+    will be used by all signers to derive their signing challenge. Then, the
+    coordinator stores state (st) and sends ctx to all signers."""
+
     R1_list = [out[0] for _, _, out in signer_inputs]
     R2_list = [out[1] for _, _, out in signer_inputs]
 
@@ -104,7 +122,7 @@ def Coord(signer_inputs: List[Tuple[PublicKey, Message, SignerOutput]]) -> Tuple
 
 
 def hash_sig(L: SignersList, R: PublicNonce, X: PublicKey, m: Message) -> SignerChallenge:
-    """ Hsig """
+    """ (aka Hsig) """
     data = R.to_bytes_xonly()
     for X_i, m_i in L:
         data += X_i.to_bytes_xonly() + m_i
@@ -115,7 +133,16 @@ def hash_sig(L: SignersList, R: PublicNonce, X: PublicKey, m: Message) -> Signer
 
 
 def Sign2(sk_i: SecretKey, st_i: SignerState, m_i: Message, ctx: Context) -> int:
-    """ Sign' """
+    """ (aka Sign') On input a message (m_i) and the coordinator first round
+    output ctx, signer i, which has public key pk_i and state st_i, parses ctx
+    and checks whether their own R2_i is only included once. If not (i.e., if
+    it is missing or included multiple times), then it aborts the session.
+    Otherwise, the signer also checks that their R2_i is also paired with their
+    correct public key and message. If not, then it aborts the session.
+    Then it extracts from ctx the public key/message pairs list (L) and computes
+    R, the common nonce. It also calculates their challenge s_i and sends it to
+    the coordinator."""
+
     r1_i, r2_i, R2_i = st_i
     R1, R2, signer_triples = ctx
 
@@ -137,13 +164,16 @@ def Sign2(sk_i: SecretKey, st_i: SignerState, m_i: Message, ctx: Context) -> int
     R = R1 + (b * R2)
 
     c_i = hash_sig(L, R, X_i, m_i)
-    s = int(r1_i + b * r2_i + c_i * sk_i) % n
+    s_i = int(r1_i + b * r2_i + c_i * sk_i) % n
 
-    return s
+    return s_i
 
 
 def Coord2(st: PublicNonce, challenges: List[SignerChallenge]) -> Signature:
-    """ Coord' """
+    """ (aka Coord') On input of all the signer challenges, the coordinator,
+    calculates the common challenge s and returns it together with R as the
+    finalized signature."""
+
     R = st
 
     s = 0
@@ -154,6 +184,9 @@ def Coord2(st: PublicNonce, challenges: List[SignerChallenge]) -> Signature:
 
 
 def Ver(L: SignersList, sig: Signature) -> bool:
+    """ Given a list of public key/message pairs (L) and the signature, check
+    the signature is valid."""
+
     R, s = sig
 
     for X_i, _ in L:
@@ -175,12 +208,11 @@ def Ver(L: SignersList, sig: Signature) -> bool:
 
 
 def TweakSK(x: SecretKey, t: Tweak) -> SecretKey:
-    return int(x + t) % n
+    return x + t
 
 
 def TweakPK(X: PublicKey, t: Tweak) -> PublicKey:
-    T = t * G
-    return X + T
+    return X + t * G
 
 
 def DahLIAS(signers: List[Tuple[SecretKey, PublicKey, Message]]) -> Signature:
@@ -211,7 +243,7 @@ def DahLIAS(signers: List[Tuple[SecretKey, PublicKey, Message]]) -> Signature:
 
 
 def test_fullagg_scheme():
-    sk1, sk2, sk3 = Scalar(secrets.randbelow(n-1) + 1), Scalar(secrets.randbelow(n-1) + 1), Scalar(secrets.randbelow(n-1) + 1)
+    sk1, sk2, sk3 = _rand_scalar(), _rand_scalar(), _rand_scalar()
     pk1, pk2, pk3 = sk1 * G, sk2 * G, sk3 * G
     m1, m2, m3 = b"jonas", b"tim", b"yannick"
 
@@ -223,7 +255,7 @@ def test_fullagg_scheme():
     assert valid
 
     # DahLIAS round with tweaking
-    tweaks = [secrets.randbelow(n-1) + 1, secrets.randbelow(n-1) + 1, secrets.randbelow(n-1) + 1]
+    tweaks = [_rand_scalar(), _rand_scalar(), _rand_scalar()]
     tweaked_signers = [(TweakSK(sk, tweaks[i]), TweakPK(pk, tweaks[i]), m) for i, (sk, pk, m) in enumerate(signers)]
     signers2 = signers + tweaked_signers
     sig2 = DahLIAS(signers2)
@@ -237,7 +269,7 @@ def test_fullagg_scheme():
         ([(pk1, m1), (pk1, m2), (pk3, b'')], sig),  # m3 wrong
         ([(pk2, m2), (pk1, m1), (pk3, m3)], sig),  # L order changed
         ([(pk1, m1), (pk3, m3)], sig),  # L incomplete
-        ([(pk1, m1), (pk2, m2), (pk3, m3)], (random.randint(1, n-1) * G, random.randint(1, n-1))),  # bogus sig
+        ([(pk1, m1), (pk2, m2), (pk3, m3)], (_rand_scalar() * G, _rand_scalar())),  # bogus sig
     ]
 
     for L, sig in fail_vectors:
