@@ -1,5 +1,6 @@
 from typing import (
     List,
+    NamedTuple,
     Tuple,
 )
 import secrets
@@ -37,15 +38,28 @@ SecretNonce = Scalar
 PublicNonce = GE
 # Signer output containing their R1 and R2
 # "out_i"
-SignerOutput = Tuple[PublicNonce, PublicNonce]
+class SignerOutput(NamedTuple):
+    R1_i: PublicNonce
+    R2_i: PublicNonce
 # Signer state containing their r1, r2 and R2
 # "st_i"
-SignerState = Tuple[SecretNonce, SecretNonce, PublicNonce]
+class SignerState(NamedTuple):
+    r1_i: SecretNonce
+    r2_i: SecretNonce
+    R2_i: PublicNonce
 # Context
 # "ctx"
-Context = List[Tuple[PublicKey, Message, PublicNonce, PublicNonce]]
+class ContextItem(NamedTuple):
+    pk_i: PublicKey
+    m_i: Message
+    R1_i: PublicNonce
+    R2_i: PublicNonce
+Context = List[ContextItem]
 # List of the signers public keys and messages
-SignersList = List[Tuple[PublicKey, Message]]
+class Signer(NamedTuple):
+    pk_i: PublicKey
+    m_i: Message
+SignersList = List[Signer]
 # Nonce hash
 # "b"
 NonceHash = Scalar
@@ -55,15 +69,48 @@ SignerChallenge = Scalar
 # Tweak
 # "τ"
 Tweak = Scalar
+# Participants of the scheme
+class Participant(NamedTuple):
+    sk_i: SecretKey
+    pk_i: PublicKey
+    m_i: Message
+ParticipantsList = List[Participant]
 
+
+### Helper functions (not part of protocol)
 
 def _rand_int() -> int:
     return secrets.randbelow(n-1) + 1
 
-
 def _rand_scalar() -> Scalar:
     return Scalar(_rand_int())
 
+
+### Hash functions
+
+def hash_nonce(ctx: Context) -> NonceHash:
+    """ (aka Hnon) """
+    R1, R2, signer_triples = ctx
+
+    data = R1.to_bytes_xonly() + R2.to_bytes_xonly()
+    for X_i, m_i, R2_i in signer_triples:
+        data += X_i.to_bytes_xonly() + m_i + R2_i.to_bytes_xonly()
+
+    hash_bytes = tagged_hash("FullAgg/nonce", data)
+    return int_from_bytes(hash_bytes) % n
+
+def hash_sig(L: SignersList, R: PublicNonce, X: PublicKey, m: Message) -> SignerChallenge:
+    """ (aka Hsig) """
+    data = R.to_bytes_xonly()
+    for X_i, m_i in L:
+        data += X_i.to_bytes_xonly() + m_i
+    data += X.to_bytes_xonly() + m
+
+    hash_bytes = tagged_hash("FullAgg/sig", data)
+    return int_from_bytes(hash_bytes) % n
+
+
+### Signer functions
 
 def Sign() -> Tuple[SignerOutput, SignerState]:
     """Signer i generates their secret nonces r1_i and r2_i and computes the
@@ -79,58 +126,6 @@ def Sign() -> Tuple[SignerOutput, SignerState]:
     st_i = (r1_i, r2_i, R2_i)
 
     return (out_i, st_i)
-
-
-def hash_nonce(ctx: Context) -> NonceHash:
-    """ (aka Hnon) """
-    R1, R2, signer_triples = ctx
-
-    data = R1.to_bytes_xonly() + R2.to_bytes_xonly()
-    for X_i, m_i, R2_i in signer_triples:
-        data += X_i.to_bytes_xonly() + m_i + R2_i.to_bytes_xonly()
-
-    hash_bytes = tagged_hash("FullAgg/nonce", data)
-    return int_from_bytes(hash_bytes) % n
-
-
-def Coord(signer_inputs: List[Tuple[PublicKey, Message, SignerOutput]]) -> Tuple[Context, PublicNonce]:
-    """Given all signers’ public key (pk), message (m) and first round output
-    (out), the coordinator computes R1 and R2 by summing up all the signers'
-    R1_i and R2_i. Then they define the context (ctx) and calculate the nonce
-    hash (b). Using b they calculate R. The value R is the “common” nonce that
-    will be used by all signers to derive their signing challenge. Then, the
-    coordinator stores state (st) and sends ctx to all signers."""
-
-    R1_list = [out[0] for _, _, out in signer_inputs]
-    R2_list = [out[1] for _, _, out in signer_inputs]
-
-    R1 = R1_list[0]
-    for R1_i in R1_list[1:]:
-        R1 = R1 + R1_i
-
-    R2 = R2_list[0]
-    for R2_i in R2_list[1:]:
-        R2 = R2 + R2_i
-
-    signer_triples = [(pk, msg, out[1]) for pk, msg, out in signer_inputs]
-    ctx = (R1, R2, signer_triples)
-
-    b = hash_nonce(ctx)
-    R = R1 + (b * R2)
-
-    return (ctx, R)
-
-
-def hash_sig(L: SignersList, R: PublicNonce, X: PublicKey, m: Message) -> SignerChallenge:
-    """ (aka Hsig) """
-    data = R.to_bytes_xonly()
-    for X_i, m_i in L:
-        data += X_i.to_bytes_xonly() + m_i
-    data += X.to_bytes_xonly() + m
-
-    hash_bytes = tagged_hash("FullAgg/sig", data)
-    return int_from_bytes(hash_bytes) % n
-
 
 def Sign2(sk_i: SecretKey, st_i: SignerState, m_i: Message, ctx: Context) -> int:
     """ (aka Sign') On input a message (m_i) and the coordinator first round
@@ -168,6 +163,41 @@ def Sign2(sk_i: SecretKey, st_i: SignerState, m_i: Message, ctx: Context) -> int
 
     return s_i
 
+def TweakSK(x: SecretKey, t: Tweak) -> SecretKey:
+    return x + t
+
+def TweakPK(X: PublicKey, t: Tweak) -> PublicKey:
+    return X + t * G
+
+
+### Coordinator functions
+
+def Coord(signer_inputs: List[Tuple[PublicKey, Message, SignerOutput]]) -> Tuple[Context, PublicNonce]:
+    """Given all signers’ public key (pk), message (m) and first round output
+    (out), the coordinator computes R1 and R2 by summing up all the signers'
+    R1_i and R2_i. Then they define the context (ctx) and calculate the nonce
+    hash (b). Using b they calculate R. The value R is the “common” nonce that
+    will be used by all signers to derive their signing challenge. Then, the
+    coordinator stores state (st) and sends ctx to all signers."""
+
+    R1_list = [out[0] for _, _, out in signer_inputs]
+    R2_list = [out[1] for _, _, out in signer_inputs]
+
+    R1 = R1_list[0]
+    for R1_i in R1_list[1:]:
+        R1 = R1 + R1_i
+
+    R2 = R2_list[0]
+    for R2_i in R2_list[1:]:
+        R2 = R2 + R2_i
+
+    signer_triples = [(pk, msg, out[1]) for pk, msg, out in signer_inputs]
+    ctx = (R1, R2, signer_triples)
+
+    b = hash_nonce(ctx)
+    R = R1 + (b * R2)
+
+    return (ctx, R)
 
 def Coord2(st: PublicNonce, challenges: List[SignerChallenge]) -> Signature:
     """ (aka Coord') On input of all the signer challenges, the coordinator,
@@ -182,6 +212,8 @@ def Coord2(st: PublicNonce, challenges: List[SignerChallenge]) -> Signature:
 
     return (R, s)
 
+
+### Verification function (for anyone)
 
 def Ver(L: SignersList, sig: Signature) -> bool:
     """ Given a list of public key/message pairs (L) and the signature, check
@@ -207,15 +239,9 @@ def Ver(L: SignersList, sig: Signature) -> bool:
     return lhs == rhs
 
 
-def TweakSK(x: SecretKey, t: Tweak) -> SecretKey:
-    return x + t
+### Full DahLIAS scheme
 
-
-def TweakPK(X: PublicKey, t: Tweak) -> PublicKey:
-    return X + t * G
-
-
-def DahLIAS(signers: List[Tuple[SecretKey, PublicKey, Message]]) -> Signature:
+def DahLIAS(signers: ParticipantsList) -> Signature:
     # First signing round
     first_round = []
     for _ in signers:
