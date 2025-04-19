@@ -52,9 +52,8 @@ class SignerState(NamedTuple):
 class ContextItem(NamedTuple):
     pk_i: PublicKey
     m_i: Message
-    R1_i: PublicNonce
     R2_i: PublicNonce
-Context = List[ContextItem]
+Context = Tuple[PublicNonce, PublicNonce, List[ContextItem]]
 # List of the signers public keys and messages
 class Signer(NamedTuple):
     pk_i: PublicKey
