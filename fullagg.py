@@ -86,7 +86,8 @@ def _rand_scalar() -> Scalar:
 
 
 ### Hash functions
-
+# a tagged hash of R1 || R2 || X_i || m_i || R2_i for all signers
+# For i signers we would have i concatenations of X_i || m_i || R2_i
 def hash_nonce(ctx: Context) -> NonceHash:
     """ (aka Hnon) """
     R1, R2, signer_triples = ctx
@@ -100,10 +101,11 @@ def hash_nonce(ctx: Context) -> NonceHash:
 
 def hash_sig(L: SignersList, R: PublicNonce, X: PublicKey, m: Message) -> SignerChallenge:
     """ (aka Hsig) """
-    data = R.to_bytes_xonly()
+    # ci := Hsig(L, R, Xi, mi)
+    data = b''
     for X_i, m_i in L:
         data += X_i.to_bytes_xonly() + m_i
-    data += X.to_bytes_xonly() + m
+    data += R.to_bytes_xonly() + X.to_bytes_xonly() + m
 
     hash_bytes = tagged_hash("FullAgg/sig", data)
     return int_from_bytes(hash_bytes) % n
@@ -137,12 +139,12 @@ def Sign2(sk_i: SecretKey, st_i: SignerState, m_i: Message, ctx: Context) -> int
     R, the common nonce. It also calculates their challenge s_i and sends it to
     the coordinator."""
 
+    X_i = sk_i * G
     r1_i, r2_i, R2_i = st_i
     R1, R2, signer_triples = ctx
 
-    X_i = sk_i * G
-
     U = set()
+
     for j, (_, _, R2_j) in enumerate(signer_triples):
         if R2_j == R2_i:
             U.add(j)
@@ -154,11 +156,15 @@ def Sign2(sk_i: SecretKey, st_i: SignerState, m_i: Message, ctx: Context) -> int
     assert X_u == X_i and m_u == m_i, "Public key or message doesn't match"
 
     L = [(X_j, m_j) for X_j, m_j, _ in signer_triples]
+
+    # if a signer is the Coordinator, they already know R 
     b = hash_nonce(ctx)
     R = R1 + (b * R2)
 
     c_i = hash_sig(L, R, X_i, m_i)
-    s_i = int(r1_i + b * r2_i + c_i * sk_i) % n
+    br2_i = b * r2_i
+    cx_i = c_i * sk_i
+    s_i = int(r1_i + br2_i + cx_i) % n
 
     return s_i
 
@@ -196,7 +202,9 @@ def Coord(signer_inputs: List[Tuple[PublicKey, Message, SignerOutput]]) -> Tuple
     b = hash_nonce(ctx)
     R = R1 + (b * R2)
 
-    return (ctx, R)
+    st = R
+
+    return (ctx, st)
 
 def Coord2(st: PublicNonce, challenges: List[SignerChallenge]) -> Signature:
     """ (aka Coord') On input of all the signer challenges, the coordinator,
@@ -242,38 +250,61 @@ def Ver(L: SignersList, sig: Signature) -> bool:
 
 def DahLIAS(signers: ParticipantsList) -> Signature:
     # First signing round
+    # Sign
     first_round = []
     for _ in signers:
         out_i, st_i = Sign()
         first_round.append((out_i, st_i))
 
     # First coordinator round
+    # Coord
     signer_triples = []
     for i, (_, pk_i, m_i) in enumerate(signers):
         out_i = first_round[i][0]
+        # each signer runs (out_i, st_i) ← Sign() and sends out_i to the
+        # coordinator (note that pk_i, out_i, and m_i can be sent separately
+        # or all together to the coordinator);
         signer_triples.append((pk_i, m_i, out_i))
-    ctx, R = Coord(signer_triples)
+
+    ctx, st = Coord(signer_triples)
 
     # Second signing round
-    s_list = []
+    # Sign'
+    # Sign′ must be called at most once per signer state st_i
+    out_i_list = []
     for i, (sk_i, _, m_i) in enumerate(signers):
         st_i = first_round[i][1]
         s_i = Sign2(sk_i, st_i, m_i, ctx)
-        s_list.append(s_i)
+        out_i_list.append(s_i)
 
     # Second coordinator round
-    sig = Coord2(R, s_list)
+    # Coord'
+    sig = Coord2(st, out_i_list)
 
     return sig
 
 
+def KeyGen() -> Tuple[SecretKey, PublicKey]:
+    sk = _rand_scalar()
+    pk = sk * G
+    return (sk, pk)
+
+
 def test_fullagg_scheme():
-    sk1, sk2, sk3 = _rand_scalar(), _rand_scalar(), _rand_scalar()
-    pk1, pk2, pk3 = sk1 * G, sk2 * G, sk3 * G
+    #  KeyGen
+    # each signer generates a key pair (sk_i, pk_i) ← KeyGen() and sends pk_i 
+    # to the coordinator;
+    (sk1, pk1), (sk2, pk2), (sk3, pk3) = KeyGen(), KeyGen(), KeyGen()
+
+    # each signer sends the message m_i it wants to sign to the coordinator;
     m1, m2, m3 = b"jonas", b"tim", b"yannick"
 
     # DahLIAS round
+    # each signer runs (out_i, st_i) ← Sign() and sends out_i to the
+    # coordinator (note that pk_i, out_i, and m_i can be sent separately
+    # or all together to the coordinator);
     signers = [(sk1, pk1, m1), (sk2, pk2, m2), (sk3, pk3, m3)]
+
     sig = DahLIAS(signers)
     L = [(pk, m) for _, pk, m in signers]
     valid = Ver(L, sig)
