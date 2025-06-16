@@ -254,6 +254,10 @@ def Ver(L: SignersList, sig: Signature) -> bool:
 ### Full DahLIAS scheme
 
 def DahLIAS(signers: ParticipantsList) -> Signature:
+    """ Each signer generates a key pair and sends their public key
+    and message to the Coordinator. For testing purposes, we include
+    the signers private keys in the ParticipantsList input. """
+
     # First signing round
     first_round = []
     for _ in signers:
@@ -285,18 +289,15 @@ def DahLIAS(signers: ParticipantsList) -> Signature:
 
 
 def KeyGen() -> Tuple[SecretKey, PublicKey]:
+    """ Each signer generates a key pair (sk_i, pk_i) """
     sk = _rand_scalar()
     pk = sk * G
     return (sk, pk)
 
 
 def test_fullagg_scheme():
-    #  KeyGen
-    # each signer generates a key pair (sk_i, pk_i) ← KeyGen() and sends pk_i 
-    # to the coordinator;
+    # Generate dummy keys and messages for testing purposes
     (sk1, pk1), (sk2, pk2), (sk3, pk3) = KeyGen(), KeyGen(), KeyGen()
-
-    # each signer sends the message m_i it wants to sign to the coordinator;
     m1, m2, m3 = b"jonas", b"tim", b"yannick"
 
     # DahLIAS round
