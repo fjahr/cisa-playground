@@ -255,14 +255,12 @@ def Ver(L: SignersList, sig: Signature) -> bool:
 
 def DahLIAS(signers: ParticipantsList) -> Signature:
     # First signing round
-    # Sign
     first_round = []
     for _ in signers:
         out_i, st_i = Sign()
         first_round.append((out_i, st_i))
 
     # First coordinator round
-    # Coord
     signer_triples = []
     for i, (_, pk_i, m_i) in enumerate(signers):
         out_i = first_round[i][0]
@@ -274,8 +272,6 @@ def DahLIAS(signers: ParticipantsList) -> Signature:
     ctx, st = Coord(signer_triples)
 
     # Second signing round
-    # Sign'
-    # Sign′ must be called at most once per signer state st_i
     out_i_list = []
     for i, (sk_i, _, m_i) in enumerate(signers):
         st_i = first_round[i][1]
@@ -283,7 +279,6 @@ def DahLIAS(signers: ParticipantsList) -> Signature:
         out_i_list.append(s_i)
 
     # Second coordinator round
-    # Coord'
     sig = Coord2(st, out_i_list)
 
     return sig
