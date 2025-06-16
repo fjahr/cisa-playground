@@ -86,10 +86,11 @@ def _rand_scalar() -> Scalar:
 
 
 ### Hash functions
-# a tagged hash of R1 || R2 || X_i || m_i || R2_i for all signers
-# For i signers we would have i concatenations of X_i || m_i || R2_i
 def hash_nonce(ctx: Context) -> NonceHash:
-    """ (aka Hnon) """
+    """ (aka Hnon)
+    A tagged hash of R1 || R2 || X_i || m_i || R2_i for all signers.
+    For i signers we would have i concatenations of X_i || m_i || R2_i.
+    """
     R1, R2, signer_triples = ctx
 
     data = R1.to_bytes_xonly() + R2.to_bytes_xonly()
@@ -100,8 +101,9 @@ def hash_nonce(ctx: Context) -> NonceHash:
     return int_from_bytes(hash_bytes) % n
 
 def hash_sig(L: SignersList, R: PublicNonce, X: PublicKey, m: Message) -> SignerChallenge:
-    """ (aka Hsig) """
-    # ci := Hsig(L, R, Xi, mi)
+    """ (aka Hsig)
+    Computes ci := Hsig(L, R, Xi, mi)
+    """
     data = b''
     for X_i, m_i in L:
         data += X_i.to_bytes_xonly() + m_i
