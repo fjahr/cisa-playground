@@ -36,6 +36,9 @@ SecretNonce = Scalar
 # Public nonce
 # "R"/"R_i"
 PublicNonce = GE
+# Signer state
+# "st"
+CommonNonceState = PublicNonce
 # Signer output containing their R1 and R2
 # "out_i"
 class SignerOutput(NamedTuple):
@@ -179,7 +182,7 @@ def TweakPK(X: PublicKey, t: Tweak) -> PublicKey:
 
 ### Coordinator functions
 
-def Coord(signer_inputs: List[Tuple[PublicKey, Message, SignerOutput]]) -> Tuple[Context, PublicNonce]:
+def Coord(signer_inputs: List[Tuple[PublicKey, Message, SignerOutput]]) -> Tuple[Context, CommonNonceState]:
     """Given all signers’ public key (pk), message (m) and first round output
     (out), the coordinator computes R1 and R2 by summing up all the signers'
     R1_i and R2_i. Then they define the context (ctx) and calculate the nonce
