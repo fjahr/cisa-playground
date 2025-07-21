@@ -1,11 +1,11 @@
-from bip340_reference import (
+from secp256k1lab.secp256k1 import (
+    G,
+    GE,
+    Scalar,
+)
+from secp256k1lab.util import (
     bytes_from_int,
     int_from_bytes,
-    G,
-    lift_x,
-    n,
-    point_add,
-    point_mul,
     tagged_hash,
 )
 
@@ -15,6 +15,9 @@ A python implementation of Schnorr signature half-aggregation following the
 specifiction at the BIP draft: https://github.com/BlockstreamResearch/cross-input-aggregation/blob/master/half-aggregation.mediawiki
 """
 
+
+# Group order
+n = GE.ORDER
 
 def Aggregate(pms):
     """
@@ -139,7 +142,7 @@ def VerifyAggregate(aggsig, pm_aggd):
         (pki, mi) = pm_aggd[i]
 
         # Let Pi = lift_x(int(pki)); fail if that fails
-        Pi = lift_x(int_from_bytes(pki))
+        Pi = GE.lift_x(int_from_bytes(pki))
         if Pi is None:
             return False
         P_values.append(Pi)
@@ -147,7 +150,7 @@ def VerifyAggregate(aggsig, pm_aggd):
         # Let ri = aggsig[i⋅32:(i+1)⋅32]
         ri = aggsig[i * 32:(i + 1) * 32]
         # Let Ri = lift_x(int(ri)); fail if that fails
-        Ri = lift_x(int_from_bytes(ri))
+        Ri = GE.lift_x(int_from_bytes(ri))
         if Ri is None:
             return False
         R_values.append(Ri)
@@ -168,14 +171,21 @@ def VerifyAggregate(aggsig, pm_aggd):
     s = int_from_bytes(aggsig[u * 32:(u + 1) * 32])
     if s >= n:
         return False
+    s = Scalar.from_int_checked(s)
 
     # Fail if s⋅G ≠ z0⋅(R0 + e0⋅P0) + ... + zu-1⋅(Ru-1 + eu-1⋅Pu-1)
-    lhs = point_mul(G, s)
-    rhs = None
+    lhs = s * G
+    rhs = GE()
     for i in range(u):
-        rhsi = point_add(R_values[i], point_mul(P_values[i], e_values[i]))
-        rhsi = point_mul(rhsi, z_values[i])
-        rhs = point_add(rhs, rhsi)
+        e = Scalar.from_int_checked(e_values[i])
+        P = P_values[i]
+        R = R_values[i]
+        rhsi = R + e * P
+
+        z = Scalar.from_int_checked(z_values[i])
+        rhsi = z * rhsi
+
+        rhs = rhs + rhsi
 
     return lhs == rhs
 

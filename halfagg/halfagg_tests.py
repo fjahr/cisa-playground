@@ -1,18 +1,20 @@
 import os
 
+from secp256k1lab.util import (
+    bytes_from_int,
+    int_from_bytes,
+)
+from secp256k1lab.bip340 import (
+    pubkey_gen,
+    schnorr_sign,
+    schnorr_verify,
+)
 from halfagg import (
     Aggregate,
     IncAggregate,
     VerifyAggregate,
     hashHalfAgg_randomizer,
-)
-from bip340_reference import (
-    bytes_from_int,
-    int_from_bytes,
     n,
-    pubkey_gen,
-    schnorr_sign,
-    schnorr_verify,
 )
 
 
