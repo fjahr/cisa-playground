@@ -1,0 +1,1 @@
+secp256k1lab @ git+https://github.com/secp256k1lab/secp256k1lab@v1.0.0
