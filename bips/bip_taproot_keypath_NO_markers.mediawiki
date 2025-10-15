@@ -1,0 +1,542 @@
+<pre>
+  BIP: ?
+  Layer: Consensus (soft fork)
+  Title: CISA for Taproot Keypath Spends
+  Author: Fabian Jahr <fjahr@protonmail.com>
+  Comments-Summary: No comments yet.
+  Comments-URI: https://github.com/bitcoin/bips/wiki/Comments:BIP-?
+  Status: Draft
+  Type: Standards Track
+  Created: 2025-09-15
+  License: BSD-3-Clause
+  Post-History: TODO
+  Requires: 340, 341, 342, BIP-Halfagg, BIP-Fullagg
+</pre>
+
+== Abstract ==
+
+This document proposes the introduction of cross-input signature aggregation
+(CISA) for Bitcoin transactions. A new witness version (v2) is introduced that
+enables Taproot-style keypath spending with support for two Schnorr signature
+aggregation schemes: half-aggregation and full-aggregation. Half-aggregation
+non-interactively reduces n signatures from 64*n bytes to (n+1)*32 bytes, while
+full-aggregation reduces the n signatures to a constant 64 bytes (but requiring
+interactivity at signing time). When aggregation is used, all witness v2 inputs
+in the transaction must be aggregated. Aggregated inputs use a 1-byte sighash
+type in their witness as a placeholder, with the aggregate signature provided as
+an additional witness element in the final aggregated input. This design maintains
+unambiguous validation semantics while still providing significant transaction
+size reductions.
+
+== Copyright ==
+
+This document is licensed under the 3-clause BSD license.
+
+== Motivation ==
+
+Bitcoin transaction sizes are heavily influenced by signature data. Each Taproot
+keypath spend requires a 64-byte BIP340 Schnorr signature. For transactions with
+multiple inputs, this signature overhead is substantial and represents a
+scalability limitation and cost liability to the users.
+
+However, the linear properties of Schnorr signatures enable signature
+aggregation, where multiple signatures can be cryptographically combined into a
+more compact form. Cross-input signature aggregation addresses this inefficiency
+by allowing multiple signatures within a single transaction to be aggregated.
+This provides:
+
+* '''Significant space savings''': Significant transaction size reductions depending on the number of inputs and aggregation scheme used
+* '''Lower fees''': Users pay less for multi-input transactions due to the space savings
+* '''Economic incentive for privacy''': CoinJoin/PayJoin transactions become cheaper than equivalent standard transactions, inverting the traditional cost-privacy tradeoff
+* '''Improved scalability''': More transactions per block without increasing the block weight limit
+* '''Flexible deployment''': Two aggregation schemes (half-agg and full-agg) serve different use cases
+
+For detailed numbers on space and fee savings, please refer to the respective
+signature scheme BIPs.
+
+=== Use Cases ===
+
+* '''CoinJoin/PayJoin Transactions''': Currently, CoinJoin and PayJoin transactions are hard to user for average Bitcoin users due to lack of support in mainstream wallets with friendly UX, creating a disincentive for privacy. With CISA, CoinJoin and PayJoin transactions become cheaper per-input as the number of participants increases, economically incentivizing privacy-enhancing usage and mainstream adoption.
+* '''Consolidation and Batching''': Businesses and users combining many small UTXOs into a single output or multiple payment outputs benefit from dramatically reduced transaction costs.
+* '''Lightning Network''': Channel announcements containing four signatures can be aggregated, reducing the space needed for signatures in gossip bandwidth by up to 75%.
+
+For further details and specific savings numbers please refer to the respective BIP (Halfagg or Fullagg).
+
+== Design ==
+
+This BIP introduces a new witness version (v2) that enables signature aggregation for Taproot-style keypath spends. The design follows these principles:
+
+* '''Minimize changes''': Reuse existing Taproot and tapscript code. Maintain compatibility with BIP340, BIP341, and BIP342 wherever possible.
+* '''Gradual upgrade path''': Users can adopt witness v2 outputs independently of whether they use aggregation. Aggregation is opt-in on a per-transaction basis.
+* '''Unambiguous validation''': The validation semantics must be clear and deterministic. Each signature must be unambiguously associated with a specific input.
+* '''Support multiple aggregation schemes''': Half-aggregation (non-interactive) and full-aggregation (interactive) serve different use cases and should both be supported.
+* '''Keypath only''': Limit aggregation to keypath spends to reduce complexity. Script path aggregation is deferred to future proposals.
+
+The main design decision is to use a sighash-based approach where aggregated inputs contain only a 1-byte sighash type in their witness. The last aggregated input includes an additional witness element containing the actual aggregate signature. This design:
+
+* Minimizes witness data for aggregated inputs
+* Provides clear aggregation semantics through all-or-nothing aggregation
+* Allows each input to independently specify its sighash type
+* Maintains unambiguous validation semantics
+* Enables validators to identify the aggregation scheme by signature size
+* Supports one aggregation group per transaction (either half-agg or full-agg)
+
+== Specification ==
+
+=== Witness Version 2 ===
+
+A new witness version is introduced to enable signature aggregation. Witness
+version 2 (v2) outputs are created with:
+
+* '''ScriptPubKey''': <code>OP_2 <32-byte x-only pubkey></code> (or <code>0x5220{32-byte x-only pubkey}</code>)
+* '''Address Format''': Bech32m encoding with prefix <code>bc1</code> (mainnet) or <code>tb1</code> (testnet). This means the addresses will start with <code>bc1z</code> and <code>tb1z</code> respectively.
+
+The 32-byte x-only pubkey is computed identically to BIP341 Taproot outputs:
+
+<source>
+internal_key = lift_x(derived_key)
+output_key = internal_key + tagged_hash("TapTweak", internal_key || merkle_root) * G
+witness_program = output_key.x  # 32-byte x-coordinate
+</source>
+
+Since no script path is used, <code>merkle_root</code> is empty (32 zero bytes).
+
+=== Transaction Structure ===
+
+Transactions using signature aggregation follow the standard Bitcoin transaction format with modified witness structures. Transactions must use either:
+* All non-aggregated signatures (standard BIP340 signatures for each input)
+* All aggregated signatures (all witness v2 inputs participate in a single aggregation group)
+
+Mixing aggregated and non-aggregated witness v2 inputs in the same transaction is not permitted.
+
+==== Non-Aggregated Witness v2 Keypath Spend ====
+
+A non-aggregated witness v2 keypath spend has a witness stack containing:
+
+* '''Without annex''': <code>[<64 or 65-byte signature>]</code>
+* '''With annex''': <code>[<64 or 65-byte signature>] [<0x50...>]</code>
+
+Validation proceeds identically to BIP341 keypath spends using BIP340 signature verification.
+
+==== Aggregated Witness v2 Keypath Spend ====
+
+When aggregation is used, ALL witness v2 inputs in the transaction must be aggregated. Each aggregated input contains only its sighash type as a placeholder. The last aggregated input additionally contains the aggregate signature as a second witness element.
+
+'''All aggregated inputs:'''
+
+Each aggregated input has a witness containing:
+* '''Sighash only''': <code>[<sighash_type>]</code>
+* '''Sighash with annex''': <code>[<sighash_type>] [<0x50...>]</code>
+
+The sighash_type byte specifies the sighash type for this particular input:
+* <code>0x00</code>: SIGHASH_DEFAULT
+* <code>0x01</code>: SIGHASH_ALL
+* <code>0x02</code>: SIGHASH_NONE
+* <code>0x03</code>: SIGHASH_SINGLE
+* <code>0x81</code>: SIGHASH_ALL | SIGHASH_ANYONECANPAY
+* <code>0x82</code>: SIGHASH_NONE | SIGHASH_ANYONECANPAY
+* <code>0x83</code>: SIGHASH_SINGLE | SIGHASH_ANYONECANPAY
+
+'''Last aggregated input (additionally contains the aggregate signature):'''
+
+The last aggregated input has a witness containing:
+* '''Without annex''': <code>[<sighash_type>] [<aggregate-signature>]</code>
+* '''With annex''': <code>[<sighash_type>] [<aggregate-signature>] [<0x50...>]</code>
+
+The aggregate signature size depends on the aggregation scheme:
+* Half-aggregation: <code>(n+1) × 32</code> bytes where n is the number of aggregated inputs
+* Full-aggregation: <code>64</code> bytes
+
+==== Valid Sighash Types ====
+
+All standard sighash types from BIP341 are valid for aggregated inputs.
+
+Note: While all sighash types are syntactically valid, SIGHASH_ANYONECANPAY has important compatibility considerations with signature aggregation. See the Rationale section for details.
+
+==== Examples ====
+
+'''Example 1: Three inputs, all use SIGHASH_DEFAULT (aggregated)'''
+<source>
+Input 0 witness: [0x00]              # SIGHASH_DEFAULT
+Input 1 witness: [0x00]              # SIGHASH_DEFAULT
+Input 2 witness: [0x00] [aggregate_sig_96_bytes]
+
+Each input uses sighash_type = 0x00
+Total sighash overhead: 3 bytes
+</source>
+
+'''Example 2: Three inputs with uniform, non-default sighash (aggregated)'''
+<source>
+Input 0 witness: [0x01]              # SIGHASH_ALL
+Input 1 witness: [0x01]              # SIGHASH_ALL
+Input 2 witness: [0x01] [aggregate_sig_96_bytes]
+
+Each input uses sighash_type = 0x01
+Total sighash overhead: 3 bytes
+</source>
+
+'''Example 3: Three inputs with different sighash types (aggregated)'''
+<source>
+Input 0 witness: [0x01]              # SIGHASH_ALL
+Input 1 witness: [0x03]              # SIGHASH_SINGLE
+Input 2 witness: [0x00]              # SIGHASH_DEFAULT
+                 [aggregate_sig_96_bytes]
+
+Input 0 uses sighash_type = 0x01 (ALL)
+Input 1 uses sighash_type = 0x03 (SINGLE)
+Input 2 uses sighash_type = 0x00 (DEFAULT)
+Total sighash overhead: 3 bytes
+</source>
+
+'''Example 4: Full-aggregation with uniform sighash'''
+<source>
+Input 0 witness: [0x02]              # SIGHASH_NONE
+Input 1 witness: [0x02]              # SIGHASH_NONE
+Input 2 witness: [0x02] [aggregate_sig_64_bytes]
+
+Each input uses sighash_type = 0x02
+Total sighash overhead: 3 bytes
+Aggregation type determined by 64-byte signature size
+</source>
+
+'''Example 5: Non-aggregated transaction (all standard signatures)'''
+<source>
+Input 0 witness: [64-byte signature]  # Non-aggregated, DEFAULT
+Input 1 witness: [65-byte signature]  # Non-aggregated with explicit sighash
+Input 2 witness: [64-byte signature]  # Non-aggregated, DEFAULT
+
+No aggregation used - standard BIP340 signatures
+</source>
+
+'''Example 6: Invalid - mixing aggregated and non-aggregated (NOT ALLOWED)'''
+<source>
+Input 0 witness: [64-byte signature]  # Non-aggregated
+Input 1 witness: [0x01]               # Aggregated sighash placeholder
+Input 2 witness: [0x01] [aggregate_sig]
+
+This is INVALID - cannot mix aggregated and non-aggregated witness v2 inputs
+</source>
+
+=== Signature Size Identification ===
+
+The validation algorithm determines the signature type by examining:
+
+# The number and type of witness v2 inputs
+# The number of witness elements
+# The byte length of witness elements
+
+{| class="wikitable"
+|+ Signature type identification
+|-
+! Witness Elements !! Element Sizes !! Interpretation !! Validation Algorithm
+|-
+| 1 element: [64 or 65 bytes] || Standard signature size || Standard BIP340 signature || BIP340 verification
+|-
+| 1 element: [1 byte] || Valid sighash type || Aggregated input placeholder || Mark for aggregate verification
+|-
+| 2 elements: [1 byte] [64 bytes] || Sighash + 64 bytes || Full-aggregate signature || Full-aggregation verification
+|-
+| 2 elements: [1 byte] [(n+1)*32 bytes] || Sighash + multiple of 32 || Half-aggregate signature || Half-aggregation verification
+|}
+
+=== Validation Rules ===
+
+A witness v2 keypath spend is validated using a three-pass approach:
+
+'''Pass 1: Parse and collect aggregation information'''
+
+For each input with witness v2:
+
+1. '''Extract annex if present''':
+   * If the witness stack has at least two elements, and the first byte of the last element is <code>0x50</code>, this last element is the annex and is removed from the witness stack
+
+2. '''Classify input based on witness structure''':
+   * '''1 element, 64 or 65 bytes''': Non-aggregated signature
+   * '''1 element, 1 byte (valid sighash)''': Aggregation placeholder
+   * '''2 elements, first is 1 byte (valid sighash)''': Placeholder with aggregate signature
+   * '''Otherwise''': Invalid
+
+3. '''For inputs with sighash placeholders''':
+   * Verify the 1-byte value is a valid sighash_type (0x00-0x03, 0x81-0x83)
+   * Store: (input_index, sighash_type, has_aggregate_sig)
+
+'''Pass 2: Validate transaction-wide aggregation consistency'''
+
+1. '''Check aggregation mode consistency''':
+   * Count witness v2 inputs with standard signatures
+   * Count witness v2 inputs with sighash placeholders
+   * If both counts are non-zero: Fail (mixing not allowed)
+   * If all witness v2 inputs have standard signatures: Continue with non-aggregated validation
+   * If all witness v2 inputs have sighash placeholders: Continue with aggregated validation
+
+2. '''For aggregated mode (if all v2 inputs have placeholders)''':
+   * Verify exactly one input has an aggregate signature
+   * Count n = total number of witness v2 inputs
+   * Determine aggregation type from signature size:
+     * If signature is 64 bytes: Full-aggregation
+     * If signature is (n+1) × 32 bytes: Half-aggregation
+     * Otherwise: Invalid
+
+3. '''Explicit failure conditions''':
+   * Mixing aggregated and non-aggregated witness v2 inputs → Fail
+   * No aggregate signature when placeholders present → Fail
+   * Multiple aggregate signatures → Fail
+   * Invalid signature size for number of inputs → Fail
+
+'''Pass 3: Verify signatures'''
+
+1. '''For non-aggregated mode (all standard signatures)''':
+   * For each witness v2 input:
+     * Parse sighash_type from signature
+     * Compute message = SigMsg(sighash_type, 0)
+     * Verify using BIP340 against output key
+
+2. '''For aggregated mode (all placeholders)''':
+   * Collect all witness v2 inputs and their sighash types
+   * For each aggregated input i: compute m_i = SigMsg(sighash_types[i], 0)
+   * Based on aggregate signature size:
+     * If 64 bytes: Use BIP-Fullagg verification
+     * If (n+1) × 32 bytes: Use BIP-Halfagg verification
+   * Fail if verification fails
+
+'''Transaction-level validation''':
+* Verify consistency of aggregation mode across all witness v2 inputs
+* Verify exactly zero or one aggregate signature
+
+=== Half-Aggregation Algorithm ===
+
+Half-aggregation is a non-interactive signature aggregation scheme that combines n BIP340 signatures into a signature of size (n+1)*32 bytes. For the specification of signature creation and verification please refer to BIP-Halfagg.
+
+=== Full-Aggregation Algorithm ===
+
+Full-aggregation is an interactive two-round protocol that combines n signatures into a single constant-size 64-byte signature. For the specification of signature creation and verification please refer to BIP-Fullagg.
+
+== Rationale ==
+
+=== Why a New Witness Version? ===
+
+A new witness version (v2) is necessary because BIP141 requires that each witness version have completely specified validation rules. Reusing witness v1 would create ambiguity about whether inputs use Taproot or aggregation semantics.
+
+The alternative of reusing witness v1 was rejected because:
+* BIP341 validation rules don't permit the 1-byte sighash placeholders needed for aggregation
+* Determining whether an input uses aggregation would be ambiguous
+* Future Taproot changes could conflict with aggregation features
+
+=== Why the Sighash-Based Design? ===
+
+The 1-byte sighash placeholder approach was chosen after considering several alternatives:
+
+{| class="wikitable"
+|+ Comparison of aggregation signaling approaches
+|-
+! Approach !! Pros !! Cons !! Verdict
+|-
+| '''Sighash-only''' (chosen) || • Minimal witness data<br>• Direct sighash specification<br>• No extra protocol bytes<br>• Clear semantics with all-or-nothing rule || • Requires all-or-nothing aggregation || ✓ Selected
+|-
+| Marker-based || • Explicit aggregation type<br>• Allows mixed transactions || • Extra bytes for markers<br>• More complex validation || ✗ Rejected
+|-
+| Empty witness || • Even more minimal || • Not permitted by BIP341<br>• No sighash specification || ✗ Rejected
+|-
+| Transaction-level field || • Clean separation || • Requires new transaction format<br>• More invasive change<br>• No per-input sighash || ✗ Rejected
+|}
+
+The sighash-only design with all-or-nothing aggregation provides:
+* Minimal witness data overhead (1 byte per input)
+* Clear and unambiguous validation semantics
+* Direct per-input sighash type specification
+* Compatibility with existing transaction structure
+* Simple validation rules without ambiguity
+
+=== Why All-or-Nothing Aggregation? ===
+
+Requiring all witness v2 inputs to use the same mode (all aggregated or all non-aggregated) simplifies validation and eliminates ambiguity: For example a 65-byte Witness could be the last part of the full-agg group or it could be a non-aggregated BIP340 signate with sighash.
+
+=== Why Two Aggregation Schemes? ===
+
+Half-aggregation and full-aggregation serve different use cases:
+
+{| class="wikitable"
+|+ Comparison of aggregation schemes
+|-
+! Property !! Half-Aggregation !! Full-Aggregation !! Notes
+|-
+| '''Signature Size''' || (n+1)*32 bytes || 64 bytes || Full-agg has constant size
+|-
+| '''Interactivity''' || Non-interactive || Interactive (2 rounds) || Half-agg can be done by anyone
+|-
+| '''Use Case''' || All transaction types, Lightning gossip || CoinJoin, wallet consolidation || Different scenarios favor each
+|-
+| '''Incremental''' || Yes || No || Half-agg can add signatures later
+|-
+| '''Verification Speed''' || O(n) scalar multiplications || O(n) scalar multiplications<br>but ~2× faster || Both scale linearly
+|-
+| '''Security Proof''' || Tight in ROM+AGM || Tight under AOMDL assumption || Both proven secure
+|-
+| '''Implementation Complexity''' || Low || Medium || Full-agg requires state management
+|-
+| '''Adaptor Compatibility''' || Incompatible with some protocols || Compatible with more protocols || Known limitation of half-agg
+|-
+| '''Privacy Impact''' || Neutral || May reveal common ownership || Full-agg requires coordination
+|}
+
+Supporting both schemes allows applications to choose the optimal tradeoff:
+* '''Half-aggregation''' is ideal for scenarios where signers cannot coordinate (miners aggregating a block, Lightning channel announcements)
+* '''Full-aggregation''' is ideal for scenarios where signers are already coordinating (CoinJoin, wallet consolidation) and maximum space savings is desired
+
+=== Why Keypath Only? ===
+
+This proposal limits aggregation to keypath spends for the following reasons:
+
+'''Reduced complexity''': Script path spends involve arbitrary scripts with potentially multiple signatures and complex validation logic. Determining which signatures to aggregate requires script analysis and creates many edge cases.
+
+'''Sufficient for primary use cases''': The majority of expected Taproot usage is keypath spends. Multi-input transactions that would benefit most from aggregation typically use simple keypath spends.
+
+'''Clear semantics''': Keypath spends have unambiguous validation semantics - one signature per input. Script path aggregation would require determining:
+* Which OP_CHECKSIG operations should be aggregated
+* How OP_CHECKSIGADD interacts with aggregation  
+* Whether MuSig-style key aggregation can be combined with signature aggregation
+
+'''Allows future expansion''': Limiting this BIP to keypath spends doesn't prevent future BIPs from adding script path aggregation after the design is thoroughly vetted.
+
+'''Immediate benefits''': Keypath-only aggregation still provides 20-40% transaction size reduction for common multi-input transactions.
+
+Script path aggregation is an important future direction but should be addressed in a separate proposal after keypath aggregation has been deployed and evaluated.
+
+=== Comment on usage of ANYONECANPAY ===
+
+This BIP permits all standard sighash types at the consensus level, including SIGHASH_ANYONECANPAY (0x80 flag), even though ANYONECANPAY has important compatibility considerations with signature aggregation.
+
+'''Rationale for allowing ANYONECANPAY''':
+
+'''Consensus vs. Protocol Layer Separation''': The decision of when to aggregate signatures is a protocol/application layer concern, not a consensus concern. Consensus rules should be permissive and allow all valid sighash types. Applications can choose whether to use aggregation based on their specific requirements.
+
+'''Full-Aggregation Incompatibility''': Full-aggregation is genuinely incompatible with the typical use-case of ANYONECANPAY because full-aggregation requires interactive signing with all participants coordinating during the signature creation process. If one party uses ANYONECANPAY with the intent of allowing inputs to be added later, the interactive protocol cannot be completed until all inputs are known, defeating the purpose of ANYONECANPAY.
+
+'''Half-Aggregation Compatibility''': While ANYONECANPAY appears incompatible with full-aggregation, half-aggregation can work with ANYONECANPAY inputs through a specific workflow:
+
+# Transaction is constructed with ANYONECANPAY inputs
+# Additional inputs are added as needed (the purpose of ANYONECANPAY)
+# Once the input set is finalized, half-aggregation is performed on all inputs
+
+Since half-aggregation is '''non-interactive''' and can be performed '''after''' all inputs are finalized. The aggregation coefficients depend on the complete set of R values, but once that set is fixed, anyone can perform the aggregation without coordination with the original signers.
+
+=== Signature Size and Distinguishability ===
+
+A key design property is that aggregation type can be determined from witness structure:
+
+'''Standard BIP340''': 1 element of 64 or 65 bytes
+* Used when no sighash placeholders are present
+* Validated using standard BIP340 verification
+
+'''Half-aggregation''': Sighash placeholders with signature of (n+1)*32 bytes
+* 96 bytes for 2 signatures, 128 for 3, etc.
+* Size identifies half-aggregation
+* Number of aggregated signatures is deterministic from size
+
+'''Full-aggregation''': Sighash placeholders with 64-byte signature
+* Same signature size as standard BIP340
+* Distinguished by presence of sighash placeholders in all v2 inputs
+* Aggregation type determined from signature size being 64 bytes
+
+This property allows validators to efficiently determine the validation algorithm by examining the witness structure.
+
+== Security ==
+
+=== Cryptographic Security ===
+
+Please refer to the respective signature aggregation scheme BIPs for information on their formal security proofs.
+
+=== Security Considerations ===
+
+'''Quantum Resistance'''
+
+Like all elliptic curve cryptography, aggregated Schnorr signatures are vulnerable to quantum attacks via Shor's algorithm. This proposal does not address quantum resistance, which should be handled separately.
+
+'''Cryptanalytic Breakthroughs'''
+
+If an unexpected breakthrough weakens Schnorr signatures or the discrete logarithm problem on secp256k1 all Bitcoin signatures (including aggregated ones) would be affected and the same migration strategies would apply.
+
+'''Post-Activation Weaknesses'''
+
+If aggregation is found to have weaknesses post-activation non-aggregated witness v2 keypath spends remain available, so at worst users would reverting to pre-aggregation behavior.
+
+'''Adaptor Signature Incompatibility'''
+
+Signature aggregation is known to be incompatible with certain adaptor signature protocols. Protocols requiring adaptor signatures should use non-aggregated signatures for adaptor-enabled inputs.
+
+== Test Vectors ==
+
+TODO: Test Vectors
+
+== Reference Implementation ==
+
+TODO: Bitcoin Core PR
+
+== Backward Compatibility ==
+
+=== Non-Upgraded Nodes ===
+
+Nodes that have not upgraded to support witness version 2 will:
+
+* '''Validation''': Treat witness v2 outputs as anyone-can-spend (per BIP141 unknown witness version rule)
+* '''Relay''': May not relay witness v2 transactions (policy dependent)
+* '''Mining''': May not include witness v2 transactions in blocks (policy dependent)
+
+This is standard soft fork behavior. Non-upgraded nodes remain compatible with the network but don't enforce the new rules.
+
+=== Non-Upgraded Wallets ===
+
+Wallets that have not been updated to support witness v2:
+
+* '''Cannot create witness v2 addresses'''
+* '''Cannot spend witness v2 outputs''' (will not recognize them)
+* '''Can send to witness v2 addresses''' (if they support Bech32m encoding)
+* '''Can use witness v0 (Segwit) and v1 (Taproot) normally'''
+
+Users of non-upgraded wallets are not negatively affected but cannot benefit from aggregation until they upgrade.
+
+=== Taproot Compatibility ===
+
+Witness v2 is designed to coexist with witness v1 (Taproot):
+
+* The same keys can be used for both (with appropriate tweaking)
+* Transactions can mix witness v1 and v2 inputs
+* The same HD derivation paths can be used
+* Migration from v1 to v2 is straightforward
+
+=== Future Extensibility ===
+
+Script path aggregation can be specified in a separate BIP and added in the same or a future soft fork.
+
+== Acknowledgments ==
+
+This proposal builds on extensive research and community discussions:
+
+* '''BIP340, 341, 342 authors''': Pieter Wuille, Jonas Nick, Tim Ruffing, and Anthony Towns for the Taproot foundation this builds upon
+* '''Half-aggregation research''': Jonas Nick and Tim Ruffing for their work on half-aggregation of BIP340 signatures
+* '''DahLIAS research''': Jonas Nick, Tim Ruffing, and Yannick Seurin for the full-aggregation protocol
+* '''CISA research community''': Contributors to cisaresearch.org and ongoing discussions
+* '''Security proofs''': Konstantinos Chalkias, Francois Garillot, Yashvanth Kondi, Valeria Nikolaenko (CT-RSA 2021), and Yanbo Chen, Yunlei Zhao (IACR 2022) for half-aggregation security proofs
+* '''Bitcoin Core developers''': For discussions at CoreDev meetings about implementation challenges and tradeoffs
+
+Thanks to the broader Bitcoin community for feedback on early drafts and ideas.
+
+== References ==
+
+# [https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki BIP340: Schnorr Signatures for secp256k1]
+# [https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki BIP341: Taproot: SegWit version 1 spending rules]
+# [https://github.com/bitcoin/bips/blob/master/bip-0342.mediawiki BIP342: Validation of Taproot Scripts]
+# [https://github.com/BlockstreamResearch/cross-input-aggregation/blob/master/half-aggregation.mediawiki Half-Aggregation of BIP 340 Signatures] (Draft BIP)
+# [https://eprint.iacr.org/2025/692 DahLIAS: Discrete Logarithm-Based Interactive Aggregate Signatures] Nick, Ruffing, Seurin (2025)
+# [https://eprint.iacr.org/2022/222 Half-Aggregation of Schnorr Signatures with Tight Reductions] Chen & Zhao (2022)
+# [https://eprint.iacr.org/2021/350 Non-Interactive Half-Aggregation of EdDSA and Variants of Schnorr Signatures] Chalkias et al. (2021)
+# [https://cisaresearch.org/ CISA Research Website]
+# [https://hrf.org/latest/cisa-research-paper/ HRF CISA Research Paper]
+
+== Footnotes ==
+
+<references />
+
+== Changelog ==
+
+* 2025-09-15: Initial draft
