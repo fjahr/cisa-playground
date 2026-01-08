@@ -142,16 +142,18 @@ def VerifyAggregate(aggsig, pm_aggd):
         (pki, mi) = pm_aggd[i]
 
         # Let Pi = lift_x(int(pki)); fail if that fails
-        Pi = GE.lift_x(int_from_bytes(pki))
-        if Pi is None:
+        try:
+            Pi = GE.lift_x(int_from_bytes(pki))
+        except ValueError:
             return False
         P_values.append(Pi)
 
         # Let ri = aggsig[i⋅32:(i+1)⋅32]
         ri = aggsig[i * 32:(i + 1) * 32]
         # Let Ri = lift_x(int(ri)); fail if that fails
-        Ri = GE.lift_x(int_from_bytes(ri))
-        if Ri is None:
+        try:
+            Ri = GE.lift_x(int_from_bytes(ri))
+        except ValueError:
             return False
         R_values.append(Ri)
         r_values.append(ri)
