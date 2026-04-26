@@ -345,10 +345,7 @@ Full-aggregation is ''not'' compatible with ECDSA signatures traditionally used 
 
 == Test Vectors and Reference Code ==
 
-A reference implementation in Python is available at https://github.com/fjahr/cisa-playground/blob/main/fullagg.py, using the [https://github.com/secp256k1lab/secp256k1lab secp256k1lab] library.
-
-The reference implementation does not handle y-parity (it operates over full group elements internally) and uses variable-length messages.
-A conforming implementation of this BIP must handle y-parity as specified in the ''Sign'' algorithm and restrict messages to 32 bytes.
+A reference implementation in Python is available at https://github.com/fjahr/cisa-playground/blob/main/bips/fullagg/reference.py, using the [https://github.com/secp256k1lab/secp256k1lab secp256k1lab] library.
 
 Comprehensive test vectors will be provided in a future revision.
 
