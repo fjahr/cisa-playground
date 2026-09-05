@@ -1,0 +1,162 @@
+<pre>
+  BIP: ?
+  Layer: Applications
+  Title: cisa() Output Script Descriptors
+  Authors: Fabian Jahr <fjahr@protonmail.com>
+  Status: Draft
+  Type: Specification
+  Assigned: ?
+  License: CC0-1.0 OR MIT
+  Requires: 380, 386, 460
+</pre>
+
+== Introduction ==
+
+=== Abstract ===
+
+This document specifies <tt>cisa()</tt> output script descriptors.
+<tt>cisa()</tt> descriptors take a key and optionally a tree of scripts and produce a witness version 2 output script as specified in [[bip-0460.mediawiki|BIP 460]].
+<tt>cisa()</tt> descriptors differ from the <tt>tr()</tt> descriptors of [[bip-0386.mediawiki|BIP 386]] only in the witness version of the output script.
+
+=== Copyright ===
+
+This document, along with the [[bip_cisa_descriptor/gen_test_vectors.py|test vector generator]] and [[bip_cisa_descriptor/test-vectors.json|test vectors]], is licensed under CC0-1.0 or the MIT License, at your option.
+
+=== Motivation ===
+
+BIP 460 adds one additional output script format: witness version 2 outputs, whose key path spends can participate in cross-input signature aggregation.
+The <tt>raw()</tt> and <tt>addr()</tt> descriptors of [[bip-0385.mediawiki|BIP 385]] can represent such an output, but not the keys, derivation paths, and script tree it was built from.
+This expression allows specifying that information as a descriptor, so wallets can generate addresses, detect received coins, and back up the spending conditions of witness version 2 outputs.
+<tt>tr()</tt> descriptors produce witness version 1 output scripts and therefore cannot describe these outputs.
+
+== Specification ==
+
+A new script expression is defined: <tt>cisa()</tt>.
+The <tt>cisa(KEY)</tt> and <tt>cisa(KEY, TREE)</tt> expressions are specified exactly as <tt>tr(KEY)</tt> and <tt>tr(KEY, TREE)</tt> in BIP 386, including the Tree Expression and the key expression rules, except for the differences in this section.
+
+=== Output script and address ===
+
+The witness version of the output script is 2 instead of 1:
+
+<pre>
+scriptPubKey:       OP_2 <32_byte_output_key>
+</pre>
+
+The output scripts are encoded as Bech32m addresses with witness version 2 as specified in [[bip-0350.mediawiki|BIP 350]].
+
+=== Expressions within <tt>cisa()</tt> ===
+
+Other BIPs restrict where their expressions may appear.
+[[bip-0387.mediawiki|BIP 387]] allows <tt>multi_a()</tt> and <tt>sortedmulti_a()</tt> only within <tt>tr()</tt>, [[bip-0379.md|BIP 379]] allows Miniscript within <tt>wsh()</tt> and <tt>tr()</tt>, and [[bip-0390.mediawiki|BIP 390]] allows <tt>musig()</tt> within <tt>tr()</tt>, <tt>rawtr()</tt>, and <tt>sp()</tt>.
+Any expression that is allowed within a <tt>tr()</tt> descriptor is also allowed in the same position within a <tt>cisa()</tt> descriptor.
+
+== Test vectors ==
+
+Valid descriptors followed by the scripts and addresses they produce.
+Descriptors involving derived child keys will have the 0th, 1st, and 2nd scripts listed.
+The keys are taken from the test vectors of BIP 386, BIP 387, and BIP 390 and from the descriptor tests of Bitcoin Core, so the output keys can be checked against the corresponding <tt>tr()</tt> descriptors.
+[[bip_cisa_descriptor/gen_test_vectors.py|gen_test_vectors.py]] generates the vectors and writes them to [[bip_cisa_descriptor/test-vectors.json|test-vectors.json]].
+
+* <tt>cisa(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd)</tt>
+** Script: <tt>522077aab6e066f8a7419c5ab714c12c67d25007ed55a43cadcacb4d7a970a093f11</tt>
+** Address: <tt>bc1zw74tdcrxlzn5r8z6ku2vztr86fgq0m245s72mjktf4afwzsf8ugs84fgvh</tt>
+* <tt>cisa(03a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd)</tt>
+** Script: <tt>522077aab6e066f8a7419c5ab714c12c67d25007ed55a43cadcacb4d7a970a093f11</tt>
+** Address: <tt>bc1zw74tdcrxlzn5r8z6ku2vztr86fgq0m245s72mjktf4afwzsf8ugs84fgvh</tt>
+* <tt>cisa(02a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd)</tt>
+** Script: <tt>522077aab6e066f8a7419c5ab714c12c67d25007ed55a43cadcacb4d7a970a093f11</tt>
+** Address: <tt>bc1zw74tdcrxlzn5r8z6ku2vztr86fgq0m245s72mjktf4afwzsf8ugs84fgvh</tt>
+* <tt>cisa(L4rK1yDtCWekvXuE6oXD9jCYfFNV2cWRpVuPLBcCU2z8TrisoyY1)</tt>
+** Script: <tt>522077aab6e066f8a7419c5ab714c12c67d25007ed55a43cadcacb4d7a970a093f11</tt>
+** Address: <tt>bc1zw74tdcrxlzn5r8z6ku2vztr86fgq0m245s72mjktf4afwzsf8ugs84fgvh</tt>
+* <tt>cisa([deadbeef/1/2h/3/4h]xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL/0/*)</tt>
+** Child 0
+*** Script: <tt>52207750507f33a72afbca08b42c1220aac1aaddeff759ff035d2b81c13e93037570</tt>
+*** Address: <tt>bc1zwag9qlen5u40hjsgkskpyg92cx4dmmlht8lsxhfts8qnaycrw4cqcwx6vj</tt>
+** Child 1
+*** Script: <tt>5220517660b60759fb83084316efb0d0f7cf0944c076b929a8d504fd437ce480d1af</tt>
+*** Address: <tt>bc1z29mxpds8t8acxzzrzmhmp58heuy5fsrkhy5634gyl4pheeyq6xhs2dm4gt</tt>
+** Child 2
+*** Script: <tt>5220ca34cd293af4269a7b2bd872f2b4680bb56360cf47973050bddd1f9efb8975cc</tt>
+*** Address: <tt>bc1zeg6v62f67snf57etmpe09drgpw6kxcx0g7tnq59am50ea7ufwhxqudkxk5</tt>
+* <tt>cisa(xprvA1RpRA33e1JQ7ifknakTFpgNXPmW2YvmhqLQYMmrj4xJXXWYpDPS3xz7iAxn8L39njGVyuoseXzU6rcxFLJ8HFsTjSyQbLYnMpCqE2VbFWc/0/*,pk(xprvA1RpRA33e1JQ7ifknakTFpgNXPmW2YvmhqLQYMmrj4xJXXWYpDPS3xz7iAxn8L39njGVyuoseXzU6rcxFLJ8HFsTjSyQbLYnMpCqE2VbFWc/1/*))</tt>
+** Child 0
+*** Script: <tt>522078bc707124daa551b65af74de2ec128b7525e10f374dc67b64e00ce0ab8b3e12</tt>
+*** Address: <tt>bc1z0z78qufym2j4rdj67ax79mqj3d6jtcg0xaxuv7myuqxwp2ut8cfq0a8jrt</tt>
+** Child 1
+*** Script: <tt>522001f0a02a17808c20134b78faab80ef93ffba82261ccef0a2314f5d62b6438f11</tt>
+*** Address: <tt>bc1zq8c2q2shszxzqy6t0ra2hq80j0lm4q3xrn80pg33fawk9djr3ugskaasws</tt>
+** Child 2
+*** Script: <tt>522021024954fcec88237a9386fce80ef2ced5f1e91b422b26c59ccfc174c8d1ad25</tt>
+*** Address: <tt>bc1zyypyj48uajyzx75nsm7wsrhjem2lr6gmgg4jd3vuelqhfjx345jsnll28p</tt>
+* <tt>cisa(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd,pk(669b8afcec803a0d323e9a17f3ea8e68e8abe5a278020a929adbec52421adbd0))</tt>
+** Script: <tt>522017cf18db381d836d8923b1bdb246cfcd818da1a9f0e6e7907f187f0b2f937754</tt>
+** Address: <tt>bc1zzl833kecrkpkmzfrkx7my3k0ekqcmgdf7rnw0yrlrplsktunwa2qk3llxl</tt>
+* <tt>cisa(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd,{pk(xprvA2JDeKCSNNZky6uBCviVfJSKyQ1mDYahRjijr5idH2WwLsEd4Hsb2Tyh8RfQMuPh7f7RtyzTtdrbdqqsunu5Mm3wDvUAKRHSC34sJ7in334/0),{{pk(xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL),pk(02df12b7035bdac8e3bab862a3a83d06ea6b17b6753d52edecba9be46f5d09e076)},pk(L4rK1yDtCWekvXuE6oXD9jCYfFNV2cWRpVuPLBcCU2z8TrisoyY1)}})</tt>
+** Script: <tt>522071fff39599a7b78bc02623cbe814efebf1a404f5d8ad34ea80f213bd8943f574</tt>
+** Address: <tt>bc1zw8ll89ve57mchspxy097s980a0c6gp84mzknf65q7gfmmz2r746qtfww2p</tt>
+* <tt>cisa(50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0,multi_a(2,[00000000/111'/222]xprvA1RpRA33e1JQ7ifknakTFpgNXPmW2YvmhqLQYMmrj4xJXXWYpDPS3xz7iAxn8L39njGVyuoseXzU6rcxFLJ8HFsTjSyQbLYnMpCqE2VbFWc,xprv9uPDJpEQgRQfDcW7BkF7eTya6RPxXeJCqCJGHuCJ4GiRVLzkTXBAJMu2qaMWPrS7AANYqdq6vcBcBUdJCVVFceUvJFjaPdGZ2y9WACViL4L/0))</tt>
+** Script: <tt>52202eea93581594a43c0c8423b70dc112e5651df63984d108d4fc8ccd3b63b4eafa</tt>
+** Address: <tt>bc1z9m4fxkq4jjjrcryyywmsmsgju4j3ma3esngs348u3nxnkca5ataqwzfp34</tt>
+* <tt>cisa(50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0,sortedmulti_a(2,[00000000/111'/222]xprvA1RpRA33e1JQ7ifknakTFpgNXPmW2YvmhqLQYMmrj4xJXXWYpDPS3xz7iAxn8L39njGVyuoseXzU6rcxFLJ8HFsTjSyQbLYnMpCqE2VbFWc,xprv9uPDJpEQgRQfDcW7BkF7eTya6RPxXeJCqCJGHuCJ4GiRVLzkTXBAJMu2qaMWPrS7AANYqdq6vcBcBUdJCVVFceUvJFjaPdGZ2y9WACViL4L/0))</tt>
+** Script: <tt>522016fa6a6ba7e98c54b5bf43b3144912b78a61b60b02f6a74172b8dcb35b12bc30</tt>
+** Address: <tt>bc1zzmax56a8axx9fddlgwe3gjgjk79xrdstqtm2wstjhrwtxkcjhscqf0s2pf</tt>
+* <tt>cisa(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd,pkh(L1NKM8dVA1h52mwDrmk1YreTWkAZZTu2vmKLpmLEbFRqGQYjHeEV))</tt>
+** Script: <tt>52201e9875f690f5847404e4c5951e2f029887df0525691ee11a682afd37b608aad4</tt>
+** Address: <tt>bc1zr6v8ta5s7kz8gp8yck23utcznzra7pf9dy0wzxng9t7n0dsg4t2q9m267m</tt>
+* <tt>cisa(musig(02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9,03dff1d77f2a671c5f36183726db2341be58feae1da2deced843240f7b502ba659,023590a94e768f8e1815c2f24b4d80a8e3149316c3518ce7b7ad338368d038ca66))</tt>
+** Script: <tt>522079e6c3e628c9bfbce91de6b7fb28e2aec7713d377cf260ab599dcbc40e542312</tt>
+** Address: <tt>bc1z08nv8e3gexlme6gau6mlk28z4mrhz0fh0nexp26enh9ugrj5yvfqukj8ew</tt>
+* <tt>cisa(musig(xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL,xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y)/0/*,pk(f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9))</tt>
+** Child 0
+*** Script: <tt>52201d377b637b5c73f670f5c8a96a2c0bb0d1a682a1fca6aba91fe673501a189782</tt>
+*** Address: <tt>bc1zr5mhkcmmt3elvu84ez5k5tqtkrg6dq4pljn2h2gluee4qxscj7pqk6tafz</tt>
+** Child 1
+*** Script: <tt>52208950c83b117a6c208d5205ffefcf75b187b32512eb7f0d8577db8d9102833036</tt>
+*** Address: <tt>bc1z39gvswc30fkzpr2jqhl7lnm4kxrmxfgjadlsmpthmwxezq5rxqmqhmmets</tt>
+** Child 2
+*** Script: <tt>5220a49a477c61df73691b77fcd563a80a15ea67bb9c75470310ce5c0f25918db60d</tt>
+*** Address: <tt>bc1z5jdywlrpmaekjxmhln2k82q2zh4x0wuuw4rsxyxwts8jtyvdkcxst9jx8j</tt>
+* <tt>cisa(f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9,pk(musig(xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL,xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y)/0/*))</tt>
+** Child 0
+*** Script: <tt>522068983d461174afc90c26f3b2821d8a9ced9534586a756763b68371a404635cc8</tt>
+*** Address: <tt>bc1zdzvr63s3wjhujrpx7wegy8v2nnke2dzcdf6kwcaksdc6gprrtnyqvxkqdw</tt>
+** Child 1
+*** Script: <tt>5220368e2d864115181bdc8bb5dc8684be8d0760d5c33315570d71a21afce4afd43e</tt>
+*** Address: <tt>bc1zx68zmpjpz5vphhytkhwgdp9735rkp4wrxv24wrt35gd0ee906slqqerrap</tt>
+** Child 2
+*** Script: <tt>522097a1e6270b33ad85744677418bae5f59ea9136027223bc6e282c47c167b471d5</tt>
+*** Address: <tt>bc1zj7s7vfctxwkc2azxwaqchtjlt84fzdszwg3mcm3g93ruzea5w82ss3nz89</tt>
+
+Invalid descriptors
+
+* Uncompressed private key: <tt>cisa(5KYZdUEo39z3FPrtuX2QbbwGnNP5zTd7yyr2SC1j299sBCnWjss)</tt>
+* Uncompressed public key: <tt>cisa(04a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd5b8dec5235a0fa8722476c7709c02559e3aa73aa03918ba2d492eea75abea235)</tt>
+* <tt>cisa()</tt> nested in <tt>wsh</tt>: <tt>wsh(cisa(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd))</tt>
+* <tt>cisa()</tt> nested in <tt>sh</tt>: <tt>sh(cisa(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd))</tt>
+* Hardened derivation from an extended public key: <tt>cisa(xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL/1h/*)</tt>
+
+== Backward compatibility ==
+
+<tt>cisa()</tt> descriptors use the format and general operation specified in [[bip-0380.mediawiki|BIP 380]].
+As these are a set of wholly new descriptors, they are not compatible with any implementation.
+The scripts produced are witness version 2 output scripts, see the Backward compatibility section of BIP 460 for how software without witness version 2 support treats them.
+
+== Rationale ==
+
+=== Why a new script expression? ===
+
+A witness version 2 output is a different output type with different spending rules.
+Descriptors identify the output type by the script expression, as the pair <tt>pkh()</tt> and <tt>wpkh()</tt> shows, so a new expression follows this convention while a parameter of <tt>tr()</tt> would not.
+It also lets implementations without support for BIP 460 reject the descriptor when parsing it instead of silently producing an output they cannot spend.
+
+=== Why no aggregation mode? ===
+
+BIP 460 makes aggregation a per-input decision at signing time, and the output script is the same for all modes.
+The mode therefore belongs to the signing process and not to the descriptor.
+
+== Reference implementation ==
+
+The test vector generator [[bip_cisa_descriptor/gen_test_vectors.py|gen_test_vectors.py]] derives output scripts and addresses for the descriptors in the test vectors.
+
+TODO: Bitcoin Core implementation.
