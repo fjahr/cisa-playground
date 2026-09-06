@@ -365,6 +365,88 @@
           }
         }
       ]
+    },
+    {
+      "description": "x-only public key used directly as the output key",
+      "given": {
+        "descriptor": "rawcisa(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd)"
+      },
+      "results": [
+        {
+          "intermediary": {
+            "internalKey": null,
+            "merkleRoot": null,
+            "outputKey": "a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd"
+          },
+          "expected": {
+            "scriptPubKey": "5220a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd",
+            "address": "bc1z5d9enu3v0yxyud4jk0pvxk3kmvrzymjpc6f0eq4ck44vr32qck7ss7ryul"
+          }
+        }
+      ]
+    },
+    {
+      "description": "ranged extended public key used directly as the output key",
+      "given": {
+        "descriptor": "rawcisa(xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL/0/*)"
+      },
+      "results": [
+        {
+          "childIndex": 0,
+          "intermediary": {
+            "internalKey": null,
+            "merkleRoot": null,
+            "outputKey": "8145454b87fc9ec3557478d6eadc2aea290b50f3c469b828abeb542ae8f8849d"
+          },
+          "expected": {
+            "scriptPubKey": "52208145454b87fc9ec3557478d6eadc2aea290b50f3c469b828abeb542ae8f8849d",
+            "address": "bc1zs9z52ju8lj0vx4t50rtw4hp2ag5sk58nc35ms29tad2z468csjwsgfy4s5"
+          }
+        },
+        {
+          "childIndex": 1,
+          "intermediary": {
+            "internalKey": null,
+            "merkleRoot": null,
+            "outputKey": "377ad06450813b5f7e10bc94b8b662513398c2d83086f8e67349a00909a5a5a4"
+          },
+          "expected": {
+            "scriptPubKey": "5220377ad06450813b5f7e10bc94b8b662513398c2d83086f8e67349a00909a5a5a4",
+            "address": "bc1zxaadqezssya47lsshj2t3dnz2yee3skcxzr03ennfxsqjzd95kjqw24253"
+          }
+        },
+        {
+          "childIndex": 2,
+          "intermediary": {
+            "internalKey": null,
+            "merkleRoot": null,
+            "outputKey": "0a862a965e930b917327d4d08e6309aeb6a4fb0970e133c8ea0d034de04cc3b0"
+          },
+          "expected": {
+            "scriptPubKey": "52200a862a965e930b917327d4d08e6309aeb6a4fb0970e133c8ea0d034de04cc3b0",
+            "address": "bc1zp2rz49j7jv9ezue86ngguccf46m2f7cfwrsn8j82p5p5mczvcwcqhnsv0h"
+          }
+        }
+      ]
+    },
+    {
+      "description": "BIP 390 musig() aggregate key used directly as the output key",
+      "given": {
+        "descriptor": "rawcisa(musig(02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9,03dff1d77f2a671c5f36183726db2341be58feae1da2deced843240f7b502ba659,023590a94e768f8e1815c2f24b4d80a8e3149316c3518ce7b7ad338368d038ca66))"
+      },
+      "results": [
+        {
+          "intermediary": {
+            "internalKey": null,
+            "merkleRoot": null,
+            "outputKey": "789d937bade6673538f3e28d8368dda4d0512f94da44cf477a505716d26a1575"
+          },
+          "expected": {
+            "scriptPubKey": "5220789d937bade6673538f3e28d8368dda4d0512f94da44cf477a505716d26a1575",
+            "address": "bc1z0zwex7aduenn2w8nu2xcx6xa5ng9ztu5mfzv73m62pt3d5n2z46s70eujj"
+          }
+        }
+      ]
     }
   ],
   "invalid": [
@@ -393,9 +475,21 @@
       }
     },
     {
-      "description": "Hardened derivation from an extended public key",
+      "description": "<tt>cisa()</tt> nested in a <tt>tr()</tt> tree",
       "given": {
-        "descriptor": "cisa(xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL/1h/*)"
+        "descriptor": "tr(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd,cisa(669b8afcec803a0d323e9a17f3ea8e68e8abe5a278020a929adbec52421adbd0))"
+      }
+    },
+    {
+      "description": "<tt>cisa()</tt> nested in a <tt>cisa()</tt> tree",
+      "given": {
+        "descriptor": "cisa(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd,cisa(669b8afcec803a0d323e9a17f3ea8e68e8abe5a278020a929adbec52421adbd0))"
+      }
+    },
+    {
+      "description": "<tt>rawcisa()</tt> with a script tree",
+      "given": {
+        "descriptor": "rawcisa(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd,pk(669b8afcec803a0d323e9a17f3ea8e68e8abe5a278020a929adbec52421adbd0))"
       }
     }
   ]

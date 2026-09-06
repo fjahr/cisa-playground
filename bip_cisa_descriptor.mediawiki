@@ -1,7 +1,7 @@
 <pre>
   BIP: ?
   Layer: Applications
-  Title: cisa() Output Script Descriptors
+  Title: cisa() and rawcisa() Output Script Descriptors
   Authors: Fabian Jahr <fjahr@protonmail.com>
   Status: Draft
   Type: Specification
@@ -14,9 +14,10 @@
 
 === Abstract ===
 
-This document specifies <tt>cisa()</tt> output script descriptors.
+This document specifies <tt>cisa()</tt> and <tt>rawcisa()</tt> output script descriptors.
 <tt>cisa()</tt> descriptors take a key and optionally a tree of scripts and produce a witness version 2 output script as specified in [[bip-0460.mediawiki|BIP 460]].
 <tt>cisa()</tt> descriptors differ from the <tt>tr()</tt> descriptors of [[bip-0386.mediawiki|BIP 386]] only in the witness version of the output script.
+<tt>rawcisa()</tt> descriptors take a single key and use it directly as the output key.
 
 === Copyright ===
 
@@ -28,11 +29,15 @@ BIP 460 adds one additional output script format: witness version 2 outputs, who
 The <tt>raw()</tt> and <tt>addr()</tt> descriptors of [[bip-0385.mediawiki|BIP 385]] can represent such an output, but not the keys, derivation paths, and script tree it was built from.
 This expression allows specifying that information as a descriptor, so wallets can generate addresses, detect received coins, and back up the spending conditions of witness version 2 outputs.
 <tt>tr()</tt> descriptors produce witness version 1 output scripts and therefore cannot describe these outputs.
+<tt>rawcisa()</tt> also describes an output known only by its 32-byte output key, for example when the wallet does not know the script tree.
 
 == Specification ==
 
-A new script expression is defined: <tt>cisa()</tt>.
+Two new script expressions are defined: <tt>cisa()</tt> and <tt>rawcisa()</tt>.
 The <tt>cisa(KEY)</tt> and <tt>cisa(KEY, TREE)</tt> expressions are specified exactly as <tt>tr(KEY)</tt> and <tt>tr(KEY, TREE)</tt> in BIP 386, including the Tree Expression and the key expression rules, except for the differences in this section.
+
+The <tt>rawcisa(KEY)</tt> expression can only be used as a top level expression.
+It takes a single key expression, subject to the same key expression rules as <tt>cisa()</tt>, and uses the resulting 32-byte x-only public key directly as the output key, without the tweak of [[bip-0341.mediawiki|BIP 341]].
 
 === Output script and address ===
 
@@ -44,17 +49,18 @@ scriptPubKey:       OP_2 <32_byte_output_key>
 
 The output scripts are encoded as Bech32m addresses with witness version 2 as specified in [[bip-0350.mediawiki|BIP 350]].
 
-=== Expressions within <tt>cisa()</tt> ===
+=== Expressions within <tt>cisa()</tt> and <tt>rawcisa()</tt> ===
 
 Other BIPs restrict where their expressions may appear.
 [[bip-0387.mediawiki|BIP 387]] allows <tt>multi_a()</tt> and <tt>sortedmulti_a()</tt> only within <tt>tr()</tt>, [[bip-0379.md|BIP 379]] allows Miniscript within <tt>wsh()</tt> and <tt>tr()</tt>, and [[bip-0390.mediawiki|BIP 390]] allows <tt>musig()</tt> within <tt>tr()</tt>, <tt>rawtr()</tt>, and <tt>sp()</tt>.
 Any expression that is allowed within a <tt>tr()</tt> descriptor is also allowed in the same position within a <tt>cisa()</tt> descriptor.
+Likewise, any expression that is allowed within a <tt>rawtr()</tt> descriptor is also allowed within a <tt>rawcisa()</tt> descriptor.
 
 == Test vectors ==
 
 Valid descriptors followed by the scripts and addresses they produce.
 Descriptors involving derived child keys will have the 0th, 1st, and 2nd scripts listed.
-The keys are taken from the test vectors of BIP 386, BIP 387, and BIP 390 and from the descriptor tests of Bitcoin Core, so the output keys can be checked against the corresponding <tt>tr()</tt> descriptors.
+The keys are taken from the test vectors of BIP 386, BIP 387, and BIP 390 and from the descriptor tests of Bitcoin Core, so the output keys can be checked against the corresponding <tt>tr()</tt> and <tt>rawtr()</tt> descriptors.
 [[bip_cisa_descriptor/gen_test_vectors.py|gen_test_vectors.py]] generates the vectors and writes them to [[bip_cisa_descriptor/test-vectors.json|test-vectors.json]].
 
 * <tt>cisa(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd)</tt>
@@ -127,6 +133,22 @@ The keys are taken from the test vectors of BIP 386, BIP 387, and BIP 390 and fr
 ** Child 2
 *** Script: <tt>522097a1e6270b33ad85744677418bae5f59ea9136027223bc6e282c47c167b471d5</tt>
 *** Address: <tt>bc1zj7s7vfctxwkc2azxwaqchtjlt84fzdszwg3mcm3g93ruzea5w82ss3nz89</tt>
+* <tt>rawcisa(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd)</tt>
+** Script: <tt>5220a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd</tt>
+** Address: <tt>bc1z5d9enu3v0yxyud4jk0pvxk3kmvrzymjpc6f0eq4ck44vr32qck7ss7ryul</tt>
+* <tt>rawcisa(xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL/0/*)</tt>
+** Child 0
+*** Script: <tt>52208145454b87fc9ec3557478d6eadc2aea290b50f3c469b828abeb542ae8f8849d</tt>
+*** Address: <tt>bc1zs9z52ju8lj0vx4t50rtw4hp2ag5sk58nc35ms29tad2z468csjwsgfy4s5</tt>
+** Child 1
+*** Script: <tt>5220377ad06450813b5f7e10bc94b8b662513398c2d83086f8e67349a00909a5a5a4</tt>
+*** Address: <tt>bc1zxaadqezssya47lsshj2t3dnz2yee3skcxzr03ennfxsqjzd95kjqw24253</tt>
+** Child 2
+*** Script: <tt>52200a862a965e930b917327d4d08e6309aeb6a4fb0970e133c8ea0d034de04cc3b0</tt>
+*** Address: <tt>bc1zp2rz49j7jv9ezue86ngguccf46m2f7cfwrsn8j82p5p5mczvcwcqhnsv0h</tt>
+* <tt>rawcisa(musig(02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9,03dff1d77f2a671c5f36183726db2341be58feae1da2deced843240f7b502ba659,023590a94e768f8e1815c2f24b4d80a8e3149316c3518ce7b7ad338368d038ca66))</tt>
+** Script: <tt>5220789d937bade6673538f3e28d8368dda4d0512f94da44cf477a505716d26a1575</tt>
+** Address: <tt>bc1z0zwex7aduenn2w8nu2xcx6xa5ng9ztu5mfzv73m62pt3d5n2z46s70eujj</tt>
 
 Invalid descriptors
 
@@ -134,11 +156,13 @@ Invalid descriptors
 * Uncompressed public key: <tt>cisa(04a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd5b8dec5235a0fa8722476c7709c02559e3aa73aa03918ba2d492eea75abea235)</tt>
 * <tt>cisa()</tt> nested in <tt>wsh</tt>: <tt>wsh(cisa(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd))</tt>
 * <tt>cisa()</tt> nested in <tt>sh</tt>: <tt>sh(cisa(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd))</tt>
-* Hardened derivation from an extended public key: <tt>cisa(xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL/1h/*)</tt>
+* <tt>cisa()</tt> nested in a <tt>tr()</tt> tree: <tt>tr(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd,cisa(669b8afcec803a0d323e9a17f3ea8e68e8abe5a278020a929adbec52421adbd0))</tt>
+* <tt>cisa()</tt> nested in a <tt>cisa()</tt> tree: <tt>cisa(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd,cisa(669b8afcec803a0d323e9a17f3ea8e68e8abe5a278020a929adbec52421adbd0))</tt>
+* <tt>rawcisa()</tt> with a script tree: <tt>rawcisa(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd,pk(669b8afcec803a0d323e9a17f3ea8e68e8abe5a278020a929adbec52421adbd0))</tt>
 
 == Backward compatibility ==
 
-<tt>cisa()</tt> descriptors use the format and general operation specified in [[bip-0380.mediawiki|BIP 380]].
+<tt>cisa()</tt> and <tt>rawcisa()</tt> descriptors use the format and general operation specified in [[bip-0380.mediawiki|BIP 380]].
 As these are a set of wholly new descriptors, they are not compatible with any implementation.
 The scripts produced are witness version 2 output scripts, see the Backward compatibility section of BIP 460 for how software without witness version 2 support treats them.
 
@@ -154,6 +178,13 @@ It also lets implementations without support for BIP 460 reject the descriptor w
 
 BIP 460 makes aggregation a per-input decision at signing time, and the output script is the same for all modes.
 The mode therefore belongs to the signing process and not to the descriptor.
+
+=== Why <tt>rawcisa()</tt>? ===
+
+Without <tt>rawcisa()</tt>, a witness version 2 output with an unknown script tree could only be described as an unsolvable <tt>addr()</tt>.
+An output known only by its output key could not be described at all.
+The corresponding <tt>rawtr()</tt> expression is implemented in Bitcoin Core and used by [[bip-0337.mediawiki|BIP 337]], [[bip-0352.mediawiki|BIP 352]], BIP 390, and [[bip-0451.md|BIP 451]], but it is not specified in BIP 386 or any other BIP.
+<tt>rawcisa()</tt> therefore cannot be specified by reference and this document defines it in full.
 
 == Reference implementation ==
 

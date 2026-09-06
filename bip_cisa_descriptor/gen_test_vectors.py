@@ -6,13 +6,13 @@ Writes test-vectors.json next to this file and prints the test vector
 section of the BIP in MediaWiki markup.
 
 The parser covers the subset of descriptor syntax used by the vectors:
-cisa(KEY) and cisa(KEY,TREE) with pk(), pkh(), multi_a(), and
-sortedmulti_a() leaves, and key expressions consisting of hex keys, WIF
-keys, BIP 32 extended keys with derivation paths, and musig() aggregate
-keys with BIP 328 derivation. It also parses tr() so the published
-BIP 386, BIP 387, and BIP 390 vectors and one Bitcoin Core descriptor
-test can check the shared derivation code before the cisa() vectors are
-produced.
+cisa(KEY), cisa(KEY,TREE), and rawcisa(KEY) with pk(), pkh(),
+multi_a(), and sortedmulti_a() leaves, and key expressions consisting
+of hex keys, WIF keys, BIP 32 extended keys with derivation paths, and
+musig() aggregate keys with BIP 328 derivation. It also parses tr() and
+rawtr() so the published BIP 386, BIP 387, and BIP 390 vectors and one
+Bitcoin Core descriptor test can check the shared derivation code
+before the cisa() vectors are produced.
 
 WARNING: All keys in this file are deterministic and publicly known.
 They exist only to make the vectors reproducible.
@@ -28,7 +28,7 @@ from secp256k1lab.util import tagged_hash
 
 n = GE.ORDER
 
-WITNESS_VERSION = {"tr": 1, "cisa": 2}
+WITNESS_VERSION = {"tr": 1, "cisa": 2, "rawtr": 1, "rawcisa": 2}
 
 
 # ---------------------------------------------------------------------------
@@ -266,8 +266,6 @@ def parse_key(s):
         parts = s.split("/")
         ext = ExtKey.parse(parts[0])
         steps, ranged = parse_path(parts[1:])
-        if ext.seckey is None and (ranged or any(h for _, h in steps)):
-            raise ValueError("hardened derivation from an extended public key")
         return ExtendedKey(ext, steps, ranged)
     if is_hex(s):
         raw = bytes.fromhex(s)
@@ -482,7 +480,11 @@ class Descriptor:
         name, args = parse_call(s.split("#")[0])
         if name not in WITNESS_VERSION:
             raise ValueError(f"{name}() is not a supported top level expression")
-        if len(args) not in (1, 2):
+        self.raw = name.startswith("raw")
+        if self.raw:
+            if len(args) != 1:
+                raise ValueError(f"{name}() takes one key")
+        elif len(args) not in (1, 2):
             raise ValueError(f"{name}() takes one or two arguments")
         self.version = WITNESS_VERSION[name]
         self.internal = parse_key(args[0])
@@ -493,15 +495,20 @@ class Descriptor:
         return self.internal.is_ranged or (self.tree is not None and self.tree.is_ranged)
 
     def output(self, child_index=0):
-        internal = self.internal.derive(child_index)
-        merkle_root = tree_hash(self.tree, child_index) if self.tree is not None else b""
-        P = GE.from_bytes_xonly(internal)
-        t = Scalar.from_bytes_checked(tagged_hash("TapTweak", internal + merkle_root))
-        Q = P + t * G
-        output_key = Q.to_bytes_xonly()
+        key = self.internal.derive(child_index)
+        merkle_root = b""
+        if self.raw:
+            output_key = key
+        else:
+            if self.tree is not None:
+                merkle_root = tree_hash(self.tree, child_index)
+            P = GE.from_bytes_xonly(key)
+            t = Scalar.from_bytes_checked(tagged_hash("TapTweak", key + merkle_root))
+            Q = P + t * G
+            output_key = Q.to_bytes_xonly()
         script = bytes([0x50 + self.version, 0x20]) + output_key
         return {
-            "internalKey": internal.hex(),
+            "internalKey": None if self.raw else key.hex(),
             "merkleRoot": merkle_root.hex() if merkle_root else None,
             "outputKey": output_key.hex(),
             "scriptPubKey": script.hex(),
@@ -537,6 +544,7 @@ MUSIG_3 = "023590a94e768f8e1815c2f24b4d80a8e3149316c3518ce7b7ad338368d038ca66"
 WIF_A = "L4rK1yDtCWekvXuE6oXD9jCYfFNV2cWRpVuPLBcCU2z8TrisoyY1"
 WIF_B = "KzoAz5CanayRKex3fSLQ2BwJpN7U52gZvxMyk78nDMHuqrUxuSJy"
 WIF_C = "L1NKM8dVA1h52mwDrmk1YreTWkAZZTu2vmKLpmLEbFRqGQYjHeEV"
+WIF_M = "KwDiBf89QgGbjEhKnhXJuH7LrciVrZi3qYjgd9M7rFU74sHUHy8S"
 WIF_UNCOMPRESSED = "5KYZdUEo39z3FPrtuX2QbbwGnNP5zTd7yyr2SC1j299sBCnWjss"
 PUB_UNCOMPRESSED = "04a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd5b8dec5235a0fa8722476c7709c02559e3aa73aa03918ba2d492eea75abea235"
 
@@ -585,6 +593,12 @@ PUBLISHED = [
       "512097a1e6270b33ad85744677418bae5f59ea9136027223bc6e282c47c167b471d5"]),
     (f"tr(musig({XPUB_C}/1,{XPUB_C}/1)/2)",
      ["5120a17ceacd6422bd5ffd9f165807b254b7d68ad39f179cc4f11545a6835227e97c"]),
+    (f"rawtr(musig({WIF_M},{MUSIG_2},{MUSIG_3}))",
+     ["5120789d937bade6673538f3e28d8368dda4d0512f94da44cf477a505716d26a1575"]),
+    (f"rawtr(musig({XPUB_C},{XPUB_E})/0/*)",
+     ["51209508c08832f3bb9d5e8baf8cb5cfa3669902e2f2da19acea63ff47b93faa9bfc",
+      "51205ca1102663025a83dd9b5dbc214762c5a6309af00d48167d2d6483808525a298",
+      "51207dbed1b89c338df6a1ae137f133a19cae6e03d481196ee6f1a5c7d1aeb56b166"]),
 ]
 
 # BIP 460 wallet vector for the witness version 2 address encoding
@@ -635,6 +649,12 @@ VALID = [
      "BIP 390 musig() internal key with BIP 328 derivation of the aggregate key"),
     (f"cisa({KEY_M},pk(musig({XPUB_C},{XPUB_E})/0/*))",
      "BIP 390 musig() leaf key with BIP 328 derivation of the aggregate key"),
+    (f"rawcisa({KEY_A})",
+     "x-only public key used directly as the output key"),
+    (f"rawcisa({XPUB_C}/0/*)",
+     "ranged extended public key used directly as the output key"),
+    (f"rawcisa(musig({MUSIG_1},{MUSIG_2},{MUSIG_3}))",
+     "BIP 390 musig() aggregate key used directly as the output key"),
 ]
 
 INVALID = [
@@ -642,7 +662,9 @@ INVALID = [
     (f"cisa({PUB_UNCOMPRESSED})", "Uncompressed public key"),
     (f"wsh(cisa({KEY_A}))", "<tt>cisa()</tt> nested in <tt>wsh</tt>"),
     (f"sh(cisa({KEY_A}))", "<tt>cisa()</tt> nested in <tt>sh</tt>"),
-    (f"cisa({XPUB_C}/1h/*)", "Hardened derivation from an extended public key"),
+    (f"tr({KEY_A},cisa({KEY_B}))", "<tt>cisa()</tt> nested in a <tt>tr()</tt> tree"),
+    (f"cisa({KEY_A},cisa({KEY_B}))", "<tt>cisa()</tt> nested in a <tt>cisa()</tt> tree"),
+    (f"rawcisa({KEY_A},pk({KEY_B}))", "<tt>rawcisa()</tt> with a script tree"),
 ]
 
 
