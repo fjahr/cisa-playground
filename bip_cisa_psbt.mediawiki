@@ -1,0 +1,243 @@
+<pre>
+  BIP: ?
+  Layer: Applications
+  Title: CISA Fields for PSBT
+  Authors: Fabian Jahr <fjahr@protonmail.com>
+  Status: Draft
+  Type: Specification
+  Assigned: ?
+  License: CC0-1.0 OR MIT
+  Requires: 174, 370, 371, 458, 459, 460
+</pre>
+
+== Introduction ==
+
+=== Abstract ===
+
+This document proposes additional fields for [[bip-0174.mediawiki|BIP 174]] PSBTv0 and [[bip-0370.mediawiki|BIP 370]] PSBTv2 that allow for cross-input signature aggregation as specified in [[bip-0460.mediawiki|BIP 460]].
+The fields carry the aggregation mode of an input, the individual signatures of half-aggregation, and the public nonces and partial signatures of full-aggregation.
+The document also specifies how the PSBT roles sign and finalize aggregation groups.
+
+=== Copyright ===
+
+This document, along with the [[bip_cisa_psbt/gen_test_vectors.py|test vector generator]] and [[bip_cisa_psbt/test-vectors.json|test vectors]], is licensed under CC0-1.0 or the MIT License, at your option.
+The generator uses the reference implementations of half-aggregation and full-aggregation in [[bip_cisa_psbt/halfagg.py|halfagg.py]] and [[bip_cisa_psbt/fullagg.py|fullagg.py]], which are licensed under the same terms.
+
+=== Motivation ===
+
+BIP 460 introduces witness version 2 outputs whose key path spends can be aggregated across the inputs of a transaction.
+A signer of such an input no longer produces the final witness by itself.
+For half-aggregation as specified in [[bip-0458.mediawiki|BIP 458]], the final witness of a group can only be built once the individual signatures of all inputs in the group are available.
+For full-aggregation as specified in [[bip-0459.mediawiki|BIP 459]], the signers also have to exchange nonces before they can sign.
+PSBT is the standard format for passing a transaction between signers and other participants.
+It therefore needs fields for the aggregation mode and for the signature material of both schemes, and rules for when an aggregated input can be finalized.
+
+== Specification ==
+
+The fields of [[bip-0371.mediawiki|BIP 371]] apply to witness version 2 inputs and outputs exactly as to Taproot inputs and outputs, including <tt>PSBT_IN_TAP_KEY_SIG</tt> for the signature of an opted-out key path spend.
+
+The new per-input types are defined as follows:
+
+{|
+! Name
+! <tt><keytype></tt>
+! <tt><keydata></tt>
+! <tt><valuedata></tt>
+! Versions Requiring Inclusion
+! Versions Requiring Exclusion
+! Versions Allowing Inclusion
+|-
+| rowspan="2"|CISA Aggregation Mode
+| rowspan="2"|<tt>PSBT_IN_CISA_MODE = 0x21</tt>
+| None
+| <tt><1 byte aggregation mode></tt>
+| rowspan="2"|
+| rowspan="2"|
+| rowspan="2"| 0, 2
+|-
+| No key data
+| The aggregation mode of the input as the ''agg_mode'' byte of BIP 460.
+<tt>0x00</tt> marks an opted-out input, <tt>0xbc</tt> an input of the half-aggregation group, and <tt>0xbd</tt> an input of the full-aggregation group.
+An input without this field is opted out.
+The field is only defined for witness version 2 inputs and only affects key path spends.
+|-
+| rowspan="2"|CISA Half-Aggregation Signature
+| rowspan="2"|<tt>PSBT_IN_CISA_HALFAGG_SIG = 0x22</tt>
+| None
+| <tt><64 or 65 byte signature></tt>
+| rowspan="2"|
+| rowspan="2"|
+| rowspan="2"| 0, 2
+|-
+| No key data
+| The 64 or 65 byte [[bip-0340.mediawiki|BIP 340]] signature of the input over the half-aggregation signature message of BIP 460.
+The sighash byte is appended as in a [[bip-0341.mediawiki|BIP 341]] signature.
+|-
+| rowspan="2"|CISA Full-Aggregation Public Nonce
+| rowspan="2"|<tt>PSBT_IN_CISA_FULLAGG_PUB_NONCE = 0x23</tt>
+| None
+| <tt><66 byte public nonce></tt>
+| rowspan="2"|
+| rowspan="2"|
+| rowspan="2"| 0, 2
+|-
+| No key data
+| The public nonce for the input, produced by the ''NonceGen'' algorithm of BIP 459.
+|-
+| rowspan="2"|CISA Full-Aggregation Partial Signature
+| rowspan="2"|<tt>PSBT_IN_CISA_FULLAGG_PARTIAL_SIG = 0x24</tt>
+| None
+| <tt><32 byte partial signature></tt>
+| rowspan="2"|
+| rowspan="2"|
+| rowspan="2"| 0, 2
+|-
+| No key data
+| The partial signature for the input, produced by the ''Sign'' algorithm of BIP 459.
+|}
+
+=== Aggregation groups ===
+
+The inputs with mode <tt>0xbc</tt> form the half-aggregation group of the transaction and the inputs with mode <tt>0xbd</tt> form the full-aggregation group.
+The input with the highest index in a group is the final input of the group as defined in BIP 460.
+
+=== Complete inputs ===
+
+A half-aggregation input is ''complete'' when it carries <tt>PSBT_IN_CISA_HALFAGG_SIG</tt>.
+A full-aggregation input is complete when it carries <tt>PSBT_IN_CISA_FULLAGG_PARTIAL_SIG</tt>.
+An aggregation group is complete when all of its inputs are complete.
+
+== Roles ==
+
+=== Updater ===
+
+The Updater sets <tt>PSBT_IN_CISA_MODE</tt> for every witness version 2 input that should take part in aggregation.
+It can set the field to <tt>0x00</tt> to record that an input must not be aggregated.
+
+=== Signer ===
+
+The Signer reads <tt>PSBT_IN_CISA_MODE</tt> to determine how to sign a witness version 2 key path input.
+A Signer must not create an opted-out signature for an aggregated input.
+
+For a half-aggregation input, the Signer creates a BIP 340 signature over the half-aggregation signature message as described in the Signing section of BIP 460 and adds it in <tt>PSBT_IN_CISA_HALFAGG_SIG</tt>.
+
+For a full-aggregation input, the Signer takes part in the signing protocol of BIP 459, with the PSBT taking the place of the coordinator.
+If the input has no <tt>PSBT_IN_CISA_FULLAGG_PUB_NONCE</tt>, the Signer runs ''NonceGen'' and adds the public nonce in this field.
+Once every input of the group has a public nonce, the Signer runs ''NonceAgg'' and ''Sign'' with the public nonces from the PSBT and the public keys and messages of the group as described in the Signing section of BIP 460.
+It adds the partial signature in <tt>PSBT_IN_CISA_FULLAGG_PARTIAL_SIG</tt>.
+'''Improper nonce usage can compromise private keys''', see BIP 459 for the requirements on nonce generation and usage.
+
+An input whose output key is a MuSig2 aggregate key is signed with the workflow of [[bip-0373.mediawiki|BIP 373]] over the message of the input's mode.
+For a half-aggregation input, the resulting BIP 340 signature is placed in <tt>PSBT_IN_CISA_HALFAGG_SIG</tt> instead of <tt>PSBT_IN_TAP_KEY_SIG</tt>.
+Full-aggregation inputs with a MuSig2 aggregate output key are not covered by this document.
+
+=== Combiner ===
+
+A Combiner must fail when the PSBTs contain different public nonces or different partial signatures for the same input, since they belong to different signing sessions.
+
+=== Input Finalizer ===
+
+An aggregated input is finalized together with the other inputs of its group, which requires the group to be complete.
+The Finalizer first verifies every individual signature of the group, half-aggregation signatures with BIP 340 and partial signatures with ''PartialSigVerify'' of BIP 459, since the aggregation algorithms do not validate their inputs, see the Signing section of BIP 460.
+It then computes the aggregate signature with ''Aggregate'' of BIP 458 or ''SigAgg'' of BIP 459 and constructs <tt>PSBT_IN_FINAL_SCRIPTWITNESS</tt> for every input of the group as specified in BIP 460.
+An aggregated input that carries <tt>PSBT_IN_TAP_KEY_SIG</tt> must not be finalized, since that signature was created over the message of an opted-out input.
+
+== Backward compatibility ==
+
+These are new fields added to the existing PSBT format, which is designed to be extensible, so software without support for this BIP ignores them.
+A Signer that supports witness version 2 key path spends but not this BIP ignores <tt>PSBT_IN_CISA_MODE</tt> and produces an opted-out signature, which the Finalizer rejects for an aggregated input.
+
+== Rationale ==
+
+=== Why no key data? ===
+
+A witness version 2 key path input has exactly one signing key, the output key, so no key data is needed to attach the fields to a particular key, as for <tt>PSBT_IN_TAP_KEY_SIG</tt> in BIP 371.
+Inputs whose output key is a MuSig2 aggregate key carry their participant data in the fields of BIP 373.
+
+=== Why a separate field for half-aggregation signatures? ===
+
+A half-aggregation signature is created over a different message than an opted-out signature and is invalid as a plain key path witness.
+A separate field keeps a Finalizer without support for this BIP from building an invalid opted-out witness from it, and makes the mode of a signed input visible from its fields alone.
+
+=== Why no field for the aggregate signature? ===
+
+The aggregate signature belongs to the group rather than to an input, and both aggregation algorithms are public operations on the signature material in the PSBT.
+The Finalizer therefore writes the aggregate signature straight into the final witnesses.
+
+=== Why does the Finalizer aggregate? ===
+
+Aggregation could also be a step of the Transaction Extractor, which is the only role with a transaction-wide view in BIP 174.
+Aggregating in the Finalizer keeps the meaning of a finalized input as one that carries its final witness, so Combiners and Extractors without support for this BIP handle a fully finalized transaction as before.
+It also matches BIP 373, where the partial signatures are aggregated before extraction as well.
+
+=== Why an explicit opted-out value? ===
+
+An absent mode field already means opted out, so <tt>0x00</tt> is not needed for signing.
+It lets an Updater distinguish an input that must not be aggregated from one whose mode has not been decided yet.
+
+=== Why are groups derived from the mode fields? ===
+
+BIP 460 allows one group per scheme per transaction and orders each group by input index.
+The group of an input and the final input of each group therefore follow from the mode fields alone, and a group identifier would carry no information.
+
+== Test vectors ==
+
+All inputs of the vectors spend witness version 2 outputs and carry the internal key in <tt>PSBT_IN_TAP_INTERNAL_KEY</tt>, and inputs signed with <tt>SIGHASH_ALL</tt> carry <tt>PSBT_IN_SIGHASH_TYPE</tt>.
+[[bip_cisa_psbt/gen_test_vectors.py|gen_test_vectors.py]] generates the vectors, checks every extracted transaction against the key path rules of BIP 460, and writes them with the keys, messages, nonces, and signatures to [[bip_cisa_psbt/test-vectors.json|test-vectors.json]].
+
+The following are valid PSBTs.
+Each case lists the PSBT at every stage of the workflow, followed by the extracted transaction.
+
+* Case: Half-aggregation group with an opted-out input
+** With aggregation modes only
+*** Base64 String: <pre>cHNidP8BALACAAAAA+nzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////wGYiVsAAAAAACJSILcdHrklCEkS2CeS2r1H1rhOzI0O2b7wdt952VTvWsO4AAAAAAABAStAQg8AAAAAACJSIK2jKgKZku99RUvYr/AHzqWT1nPj+hvecVf72RtHuEQqARcgQGGk4l8vU8cv9/0hGn5wAFRnhTf+q+JoW7u81OmTD3gBIQEAAAEBK4CEHgAAAAAAIlIgXSlTzUHtqmuEXx6l1Z/kb/2D2SYQnUrcxGG6XOsANsMBFyCke/ZfAmyc5gGpiBlpCds3hRpLnV/2Hzk61UEewqT0UgEhAbwAAQErwMYtAAAAAAAiUiBaLWjzTJHPXPxnFBsxNul+NHDfZIv+99JmXaxellBb/QEDBAEAAAABFyBrmpOw4klmmDUJ5AfN8l0BHrc1tyRCs8hPAASqBm336wEhAbwAAA==</pre>
+** With the signature of input 1
+*** Base64 String: <pre>cHNidP8BALACAAAAA+nzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////wGYiVsAAAAAACJSILcdHrklCEkS2CeS2r1H1rhOzI0O2b7wdt952VTvWsO4AAAAAAABAStAQg8AAAAAACJSIK2jKgKZku99RUvYr/AHzqWT1nPj+hvecVf72RtHuEQqARcgQGGk4l8vU8cv9/0hGn5wAFRnhTf+q+JoW7u81OmTD3gBIQEAAAEBK4CEHgAAAAAAIlIgXSlTzUHtqmuEXx6l1Z/kb/2D2SYQnUrcxGG6XOsANsMBFyCke/ZfAmyc5gGpiBlpCds3hRpLnV/2Hzk61UEewqT0UgEhAbwBIkCiJySDll+SiOZxMRBnarW2HzFzDVTYjUQr87LY1ZYHTRgzVNcmJjRQzJ6vsOE0T4TH+2yPv93dS4VAlHnwyJTeAAEBK8DGLQAAAAAAIlIgWi1o80yRz1z8ZxQbMTbpfjRw32SL/vfSZl2sXpZQW/0BAwQBAAAAARcga5qTsOJJZpg1CeQHzfJdAR63NbckQrPITwAEqgZt9+sBIQG8AAA=</pre>
+** With all signatures
+*** Base64 String: <pre>cHNidP8BALACAAAAA+nzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////wGYiVsAAAAAACJSILcdHrklCEkS2CeS2r1H1rhOzI0O2b7wdt952VTvWsO4AAAAAAABAStAQg8AAAAAACJSIK2jKgKZku99RUvYr/AHzqWT1nPj+hvecVf72RtHuEQqARNAgsB8c+ybXlD0nojfSqvRBjVuo8WZZd1zbIEFV/qc58GgVaNUrVUhL/jgW9SCr7QCqaCTJPzUqfBRGalHhUCxOwEXIEBhpOJfL1PHL/f9IRp+cABUZ4U3/qviaFu7vNTpkw94ASEBAAABASuAhB4AAAAAACJSIF0pU81B7aprhF8epdWf5G/9g9kmEJ1K3MRhulzrADbDARcgpHv2XwJsnOYBqYgZaQnbN4UaS51f9h85OtVBHsKk9FIBIQG8ASJAoickg5ZfkojmcTEQZ2q1th8xcw1U2I1EK/Oy2NWWB00YM1TXJiY0UMyer7DhNE+Ex/tsj7/d3UuFQJR58MiU3gABASvAxi0AAAAAACJSIFotaPNMkc9c/GcUGzE26X40cN9ki/730mZdrF6WUFv9AQMEAQAAAAEXIGuak7DiSWaYNQnkB83yXQEetzW3JEKzyE8ABKoGbffrASEBvAEiQR8f1R+p1Y0IQDuRx5VuKoB8SnaKV2E9G3ycXNP0/+OsfssHtHKfKAHdzZZUWhfe5RGM3b+XY3sViT4LaXHZr/QBAAA=</pre>
+** Finalized
+*** Base64 String: <pre>cHNidP8BALACAAAAA+nzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////wGYiVsAAAAAACJSILcdHrklCEkS2CeS2r1H1rhOzI0O2b7wdt952VTvWsO4AAAAAAABAStAQg8AAAAAACJSIK2jKgKZku99RUvYr/AHzqWT1nPj+hvecVf72RtHuEQqAQhCAUCCwHxz7JteUPSeiN9Kq9EGNW6jxZll3XNsgQVX+pznwaBVo1StVSEv+OBb1IKvtAKpoJMk/NSp8FEZqUeFQLE7AAEBK4CEHgAAAAAAIlIgXSlTzUHtqmuEXx6l1Z/kb/2D2SYQnUrcxGG6XOsANsMBCCIBIKInJIOWX5KI5nExEGdqtbYfMXMNVNiNRCvzstjVlgdNAAEBK8DGLQAAAAAAIlIgWi1o80yRz1z8ZxQbMTbpfjRw32SL/vfSZl2sXpZQW/0BCEQBQh8f1R+p1Y0IQDuRx5VuKoB8SnaKV2E9G3ycXNP0/+OsVWfi/KNtUya/492zDjYMsV2ZWofuru0ZzW0EUlfL25YBvAAA</pre>
+** Extracted transaction: <pre>02000000000103e9f3456a46b80e67451f5ad9a395396f24a3a8399098626e4fd9cbb97538edb80000000000ffffffff474a1a900409c7312aa1871dda4b8a3fc9cd380511c377dc48f59a9c0e0f84550000000000ffffffff415cd33f5248fed512661c464d4ffd3733032274e5012e17d8346073bee6e01f0000000000ffffffff0198895b0000000000225220b71d1eb925084912d82792dabd47d6b84ecc8d0ed9bef076df79d954ef5ac3b8014082c07c73ec9b5e50f49e88df4aabd106356ea3c59965dd736c810557fa9ce7c1a055a354ad55212ff8e05bd482afb402a9a09324fcd4a9f05119a9478540b13b0120a2272483965f9288e6713110676ab5b61f31730d54d88d442bf3b2d8d596074d01421f1fd51fa9d58d08403b91c7956e2a807c4a768a57613d1b7c9c5cd3f4ffe3ac5567e2fca36d5326bfe3ddb30e360cb15d995a87eeaeed19cd6d045257cbdb9601bc00000000</pre>
+* Case: Full-aggregation group with an opted-out input
+** With aggregation modes only
+*** Base64 String: <pre>cHNidP8BALACAAAAA+nzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////wGYiVsAAAAAACJSILcdHrklCEkS2CeS2r1H1rhOzI0O2b7wdt952VTvWsO4AAAAAAABAStAQg8AAAAAACJSIEGN91Ii2xfAlFJEsPOhEA1JR/rjpBrkEoiDDmkAuEbfARcg3YZm/JzaFKi4DdyutpMxbIQvRAin+vb4EkfTGEk52xwBIQEAAAEBK4CEHgAAAAAAIlIg8fqGYgBoeLwenA6eLVmuIIv5fyX/knC2cEljyImiHckBFyDfSuEeV1/xnDMJ+uJ8SQA5owksanfZXvxPa1zDVT4JfgEhAb0AAQErwMYtAAAAAAAiUiDfPMNFtjcuEuZheVWfK0CoY+y+g6/oFvDEFES7dEfhVwEDBAEAAAABFyCtRhTGtZbURd2+yCp7QRUX1j5p9UZgO/fPXisvRaCGQgEhAb0AAA==</pre>
+** With the public nonce of input 1
+*** Base64 String: <pre>cHNidP8BALACAAAAA+nzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////wGYiVsAAAAAACJSILcdHrklCEkS2CeS2r1H1rhOzI0O2b7wdt952VTvWsO4AAAAAAABAStAQg8AAAAAACJSIEGN91Ii2xfAlFJEsPOhEA1JR/rjpBrkEoiDDmkAuEbfARcg3YZm/JzaFKi4DdyutpMxbIQvRAin+vb4EkfTGEk52xwBIQEAAAEBK4CEHgAAAAAAIlIg8fqGYgBoeLwenA6eLVmuIIv5fyX/knC2cEljyImiHckBFyDfSuEeV1/xnDMJ+uJ8SQA5owksanfZXvxPa1zDVT4JfgEhAb0BI0ID6JxnPk2WqxqD/hd9r/lnHIgHTqJhiVcQpuc+7ofIe4YCVr1c5Ch+roEdeS5jA1WAR6rMo8a/K/UQ5GzR9mfiazMAAQErwMYtAAAAAAAiUiDfPMNFtjcuEuZheVWfK0CoY+y+g6/oFvDEFES7dEfhVwEDBAEAAAABFyCtRhTGtZbURd2+yCp7QRUX1j5p9UZgO/fPXisvRaCGQgEhAb0AAA==</pre>
+** With all public nonces
+*** Base64 String: <pre>cHNidP8BALACAAAAA+nzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////wGYiVsAAAAAACJSILcdHrklCEkS2CeS2r1H1rhOzI0O2b7wdt952VTvWsO4AAAAAAABAStAQg8AAAAAACJSIEGN91Ii2xfAlFJEsPOhEA1JR/rjpBrkEoiDDmkAuEbfARcg3YZm/JzaFKi4DdyutpMxbIQvRAin+vb4EkfTGEk52xwBIQEAAAEBK4CEHgAAAAAAIlIg8fqGYgBoeLwenA6eLVmuIIv5fyX/knC2cEljyImiHckBFyDfSuEeV1/xnDMJ+uJ8SQA5owksanfZXvxPa1zDVT4JfgEhAb0BI0ID6JxnPk2WqxqD/hd9r/lnHIgHTqJhiVcQpuc+7ofIe4YCVr1c5Ch+roEdeS5jA1WAR6rMo8a/K/UQ5GzR9mfiazMAAQErwMYtAAAAAAAiUiDfPMNFtjcuEuZheVWfK0CoY+y+g6/oFvDEFES7dEfhVwEDBAEAAAABFyCtRhTGtZbURd2+yCp7QRUX1j5p9UZgO/fPXisvRaCGQgEhAb0BI0ICbd3XQxwNFUpHuaih8x23Zzi71OJaF6r1x5zxMTNOSt8DzC0RaXHf4SOOTDZSnB/+f28PMvof+nCw/H9o8shDXr0AAA==</pre>
+** With all partial signatures
+*** Base64 String: <pre>cHNidP8BALACAAAAA+nzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////wGYiVsAAAAAACJSILcdHrklCEkS2CeS2r1H1rhOzI0O2b7wdt952VTvWsO4AAAAAAABAStAQg8AAAAAACJSIEGN91Ii2xfAlFJEsPOhEA1JR/rjpBrkEoiDDmkAuEbfARNADyU8j+VM3ovApzLqjJI9ET2FUdiaXTcUoppj0il7eyYIy2/wHnSHHZZkMSqMhaL4vbWzqj8WQB9CLnSOGxb6FwEXIN2GZvyc2hSouA3crraTMWyEL0QIp/r2+BJH0xhJOdscASEBAAABASuAhB4AAAAAACJSIPH6hmIAaHi8HpwOni1ZriCL+X8l/5JwtnBJY8iJoh3JARcg30rhHldf8ZwzCfrifEkAOaMJLGp32V78T2tcw1U+CX4BIQG9ASNCA+icZz5Nlqsag/4Xfa/5ZxyIB06iYYlXEKbnPu6HyHuGAla9XOQofq6BHXkuYwNVgEeqzKPGvyv1EORs0fZn4mszASQgGFXfPNHXcoGGpSUm6ZeWwq/jO232aht2n6UtHU2AeuYAAQErwMYtAAAAAAAiUiDfPMNFtjcuEuZheVWfK0CoY+y+g6/oFvDEFES7dEfhVwEDBAEAAAABFyCtRhTGtZbURd2+yCp7QRUX1j5p9UZgO/fPXisvRaCGQgEhAb0BI0ICbd3XQxwNFUpHuaih8x23Zzi71OJaF6r1x5zxMTNOSt8DzC0RaXHf4SOOTDZSnB/+f28PMvof+nCw/H9o8shDXr0BJCBzP/KQwv4rJm1qyhvjYjhqa93rmvnDW4qOcDACROQ+hAAA</pre>
+** Finalized
+*** Base64 String: <pre>cHNidP8BALACAAAAA+nzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////wGYiVsAAAAAACJSILcdHrklCEkS2CeS2r1H1rhOzI0O2b7wdt952VTvWsO4AAAAAAABAStAQg8AAAAAACJSIEGN91Ii2xfAlFJEsPOhEA1JR/rjpBrkEoiDDmkAuEbfAQhCAUAPJTyP5Uzei8CnMuqMkj0RPYVR2JpdNxSimmPSKXt7JgjLb/AedIcdlmQxKoyFovi9tbOqPxZAH0IudI4bFvoXAAEBK4CEHgAAAAAAIlIg8fqGYgBoeLwenA6eLVmuIIv5fyX/knC2cEljyImiHckBCAIBAAABASvAxi0AAAAAACJSIN88w0W2Ny4S5mF5VZ8rQKhj7L6Dr+gW8MQURLt0R+FXAQhEAULyUMo9nDHJhyKoV77AMZMtii3DNKhZtnBVYKCWgzf74YuV0c2U1Z2n9A/vQsz5zy0bwScI8C13AS4VXR+SZLlqAb0AAA==</pre>
+** Extracted transaction: <pre>02000000000103e9f3456a46b80e67451f5ad9a395396f24a3a8399098626e4fd9cbb97538edb80000000000ffffffff474a1a900409c7312aa1871dda4b8a3fc9cd380511c377dc48f59a9c0e0f84550000000000ffffffff415cd33f5248fed512661c464d4ffd3733032274e5012e17d8346073bee6e01f0000000000ffffffff0198895b0000000000225220b71d1eb925084912d82792dabd47d6b84ecc8d0ed9bef076df79d954ef5ac3b801400f253c8fe54cde8bc0a732ea8c923d113d8551d89a5d3714a29a63d2297b7b2608cb6ff01e74871d9664312a8c85a2f8bdb5b3aa3f16401f422e748e1b16fa1701000142f250ca3d9c31c98722a857bec031932d8a2dc334a859b6705560a0968337fbe18b95d1cd94d59da7f40fef42ccf9cf2d1bc12708f02d77012e155d1f9264b96a01bd00000000</pre>
+* Case: Half-aggregation and full-aggregation groups in one transaction
+** With aggregation modes only
+*** Base64 String: <pre>cHNidP8BANkCAAAABOnzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////4Ej146bl0ClrGCiYnMwKhzw1/JQf3WvcEujV7KNdApgAAAAAAD/////AZiSmAAAAAAAIlIgtx0euSUISRLYJ5LavUfWuE7MjQ7ZvvB233nZVO9aw7gAAAAAAAEBK0BCDwAAAAAAIlIgcXY0X+/0QLIhDmpodT0Hwd7gUBikPY/rxyTfisPwP+kBFyAV2cXNGz/uJ0wliZeE+Gs6ALhue7Qzk92iIR6TMEYgRwEhAbwAAQErgIQeAAAAAAAiUiDdsRX0dZ3see1H1/mc30ZYE4yBlJDJHuxqJ5tI91QQywEXIFzXRAUi4VrQJozDCnWvhx4bFNaorLz3nHzo0tZUVZuKASEBvQABASvAxi0AAAAAACJSIOcQglE1kLZnv/7vdK+fRWlAs4Ml+DAVjK5Vtx8ppV6vARcg6SD+pZ1w9wNREcs1g6mnIYT1wUNBl2c32JCBlzSCyCkBIQG8AAEBKwAJPQAAAAAAIlIgXlo9hs1LTYC7R18hgd5p9w89ttJW6uD99oY2fNMPSbgBFyDMteJv5ZVsQQdTy1yoHKi+ySbcewfu8oVULme2yIVyGwEhAb0AAA==</pre>
+** With all public nonces
+*** Base64 String: <pre>cHNidP8BANkCAAAABOnzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////4Ej146bl0ClrGCiYnMwKhzw1/JQf3WvcEujV7KNdApgAAAAAAD/////AZiSmAAAAAAAIlIgtx0euSUISRLYJ5LavUfWuE7MjQ7ZvvB233nZVO9aw7gAAAAAAAEBK0BCDwAAAAAAIlIgcXY0X+/0QLIhDmpodT0Hwd7gUBikPY/rxyTfisPwP+kBFyAV2cXNGz/uJ0wliZeE+Gs6ALhue7Qzk92iIR6TMEYgRwEhAbwAAQErgIQeAAAAAAAiUiDdsRX0dZ3see1H1/mc30ZYE4yBlJDJHuxqJ5tI91QQywEXIFzXRAUi4VrQJozDCnWvhx4bFNaorLz3nHzo0tZUVZuKASEBvQEjQgPonGc+TZarGoP+F32v+WcciAdOomGJVxCm5z7uh8h7hgJWvVzkKH6ugR15LmMDVYBHqsyjxr8r9RDkbNH2Z+JrMwABASvAxi0AAAAAACJSIOcQglE1kLZnv/7vdK+fRWlAs4Ml+DAVjK5Vtx8ppV6vARcg6SD+pZ1w9wNREcs1g6mnIYT1wUNBl2c32JCBlzSCyCkBIQG8AAEBKwAJPQAAAAAAIlIgXlo9hs1LTYC7R18hgd5p9w89ttJW6uD99oY2fNMPSbgBFyDMteJv5ZVsQQdTy1yoHKi+ySbcewfu8oVULme2yIVyGwEhAb0BI0ICh+91podJoMngS+1KkLCccvIXeUbRUZ7mIZQ3nphIPWcCL1g00NPgAlgferzgHgqh/hSma4slwfPvVpRNvw8xLgUAAA==</pre>
+** With all signatures
+*** Base64 String: <pre>cHNidP8BANkCAAAABOnzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////4Ej146bl0ClrGCiYnMwKhzw1/JQf3WvcEujV7KNdApgAAAAAAD/////AZiSmAAAAAAAIlIgtx0euSUISRLYJ5LavUfWuE7MjQ7ZvvB233nZVO9aw7gAAAAAAAEBK0BCDwAAAAAAIlIgcXY0X+/0QLIhDmpodT0Hwd7gUBikPY/rxyTfisPwP+kBFyAV2cXNGz/uJ0wliZeE+Gs6ALhue7Qzk92iIR6TMEYgRwEhAbwBIkATybpApZCLZlzRMre0dSce8Ek/FymfZiHLY8Tl0TuCWKJwbTADdDV+SQTDCnEy2Nnmg/vnZF65XvLZZJeZwYhTAAEBK4CEHgAAAAAAIlIg3bEV9HWd7HntR9f5nN9GWBOMgZSQyR7saiebSPdUEMsBFyBc10QFIuFa0CaMwwp1r4ceGxTWqKy895x86NLWVFWbigEhAb0BI0ID6JxnPk2WqxqD/hd9r/lnHIgHTqJhiVcQpuc+7ofIe4YCVr1c5Ch+roEdeS5jA1WAR6rMo8a/K/UQ5GzR9mfiazMBJCBJWE7oTSdIK0vFahMU2WUP0kdMK2eb8cVtOOpGsYnDpwABASvAxi0AAAAAACJSIOcQglE1kLZnv/7vdK+fRWlAs4Ml+DAVjK5Vtx8ppV6vARcg6SD+pZ1w9wNREcs1g6mnIYT1wUNBl2c32JCBlzSCyCkBIQG8ASJAPDnTXwD4qfpOce34UwtB9mEk3KAF9loFp0Ojvr2XhGrIRsKJ4X+65ZduymrnfPXOsehm3Czl7RHTilAnMf038gABASsACT0AAAAAACJSIF5aPYbNS02Au0dfIYHeafcPPbbSVurg/faGNnzTD0m4ARcgzLXib+WVbEEHU8tcqByovskm3HsH7vKFVC5ntsiFchsBIQG9ASNCAofvdaaHSaDJ4EvtSpCwnHLyF3lG0VGe5iGUN56YSD1nAi9YNNDT4AJYH3q84B4Kof4UpmuLJcHz71aUTb8PMS4FASQgnRJBJOkIPPLjl1Ze6DFkWB3jvJsqAPpzr5fs1YZ5Q5gAAA==</pre>
+** Finalized
+*** Base64 String: <pre>cHNidP8BANkCAAAABOnzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////4Ej146bl0ClrGCiYnMwKhzw1/JQf3WvcEujV7KNdApgAAAAAAD/////AZiSmAAAAAAAIlIgtx0euSUISRLYJ5LavUfWuE7MjQ7ZvvB233nZVO9aw7gAAAAAAAEBK0BCDwAAAAAAIlIgcXY0X+/0QLIhDmpodT0Hwd7gUBikPY/rxyTfisPwP+kBCCIBIBPJukClkItmXNEyt7R1Jx7wST8XKZ9mIctjxOXRO4JYAAEBK4CEHgAAAAAAIlIg3bEV9HWd7HntR9f5nN9GWBOMgZSQyR7saiebSPdUEMsBCAIBAAABASvAxi0AAAAAACJSIOcQglE1kLZnv/7vdK+fRWlAs4Ml+DAVjK5Vtx8ppV6vAQhDAUE8OdNfAPip+k5x7fhTC0H2YSTcoAX2WgWnQ6O+vZeEanu+WsRJAZN/wlrLlIi1rL9GhIjFtGyIPkFfo2/xaUvKvAABASsACT0AAAAAACJSIF5aPYbNS02Au0dfIYHeafcPPbbSVurg/faGNnzTD0m4AQhDAUF1yEWvPE8dXeznifvsApr3Bex9qaB4krPCSe4MxpE15uZqkA02L4UeL1zAcf0KyWfwKwjGkZzsORzQ1xw4Awc/vQAA</pre>
+** Extracted transaction: <pre>02000000000104e9f3456a46b80e67451f5ad9a395396f24a3a8399098626e4fd9cbb97538edb80000000000ffffffff474a1a900409c7312aa1871dda4b8a3fc9cd380511c377dc48f59a9c0e0f84550000000000ffffffff415cd33f5248fed512661c464d4ffd3733032274e5012e17d8346073bee6e01f0000000000ffffffff8123d78e9b9740a5ac60a26273302a1cf0d7f2507f75af704ba357b28d740a600000000000ffffffff019892980000000000225220b71d1eb925084912d82792dabd47d6b84ecc8d0ed9bef076df79d954ef5ac3b8012013c9ba40a5908b665cd132b7b475271ef0493f17299f6621cb63c4e5d13b8258010001413c39d35f00f8a9fa4e71edf8530b41f66124dca005f65a05a743a3bebd97846a7bbe5ac44901937fc25acb9488b5acbf468488c5b46c883e415fa36ff1694bcabc014175c845af3c4f1d5dece789fbec029af705ec7da9a07892b3c249ee0cc69135e6e66a900d362f851e2f5cc071fd0ac967f02b08c6919cec391cd0d71c3803073fbd00000000</pre>
+
+The following are invalid PSBTs.
+
+* Case: <tt>PSBT_IN_CISA_MODE</tt> with key data
+** Base64 String: <pre>cHNidP8BALACAAAAA+nzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////wGYiVsAAAAAACJSILcdHrklCEkS2CeS2r1H1rhOzI0O2b7wdt952VTvWsO4AAAAAAABAStAQg8AAAAAACJSIK2jKgKZku99RUvYr/AHzqWT1nPj+hvecVf72RtHuEQqARcgQGGk4l8vU8cv9/0hGn5wAFRnhTf+q+JoW7u81OmTD3gBIQEAAAEBK4CEHgAAAAAAIlIgXSlTzUHtqmuEXx6l1Z/kb/2D2SYQnUrcxGG6XOsANsMBFyCke/ZfAmyc5gGpiBlpCds3hRpLnV/2Hzk61UEewqT0UgIhAAG8AAEBK8DGLQAAAAAAIlIgWi1o80yRz1z8ZxQbMTbpfjRw32SL/vfSZl2sXpZQW/0BAwQBAAAAARcga5qTsOJJZpg1CeQHzfJdAR63NbckQrPITwAEqgZt9+sBIQG8AAA=</pre>
+* Case: <tt>PSBT_IN_CISA_MODE</tt> with invalid value length
+** Base64 String: <pre>cHNidP8BALACAAAAA+nzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////wGYiVsAAAAAACJSILcdHrklCEkS2CeS2r1H1rhOzI0O2b7wdt952VTvWsO4AAAAAAABAStAQg8AAAAAACJSIK2jKgKZku99RUvYr/AHzqWT1nPj+hvecVf72RtHuEQqARcgQGGk4l8vU8cv9/0hGn5wAFRnhTf+q+JoW7u81OmTD3gBIQEAAAEBK4CEHgAAAAAAIlIgXSlTzUHtqmuEXx6l1Z/kb/2D2SYQnUrcxGG6XOsANsMBFyCke/ZfAmyc5gGpiBlpCds3hRpLnV/2Hzk61UEewqT0UgEhArwAAAEBK8DGLQAAAAAAIlIgWi1o80yRz1z8ZxQbMTbpfjRw32SL/vfSZl2sXpZQW/0BAwQBAAAAARcga5qTsOJJZpg1CeQHzfJdAR63NbckQrPITwAEqgZt9+sBIQG8AAA=</pre>
+* Case: <tt>PSBT_IN_CISA_MODE</tt> with an undefined aggregation mode
+** Base64 String: <pre>cHNidP8BALACAAAAA+nzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////wGYiVsAAAAAACJSILcdHrklCEkS2CeS2r1H1rhOzI0O2b7wdt952VTvWsO4AAAAAAABAStAQg8AAAAAACJSIK2jKgKZku99RUvYr/AHzqWT1nPj+hvecVf72RtHuEQqARcgQGGk4l8vU8cv9/0hGn5wAFRnhTf+q+JoW7u81OmTD3gBIQEAAAEBK4CEHgAAAAAAIlIgXSlTzUHtqmuEXx6l1Z/kb/2D2SYQnUrcxGG6XOsANsMBFyCke/ZfAmyc5gGpiBlpCds3hRpLnV/2Hzk61UEewqT0UgEhAQEAAQErwMYtAAAAAAAiUiBaLWjzTJHPXPxnFBsxNul+NHDfZIv+99JmXaxellBb/QEDBAEAAAABFyBrmpOw4klmmDUJ5AfN8l0BHrc1tyRCs8hPAASqBm336wEhAbwAAA==</pre>
+* Case: <tt>PSBT_IN_CISA_HALFAGG_SIG</tt> with key data
+** Base64 String: <pre>cHNidP8BALACAAAAA+nzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////wGYiVsAAAAAACJSILcdHrklCEkS2CeS2r1H1rhOzI0O2b7wdt952VTvWsO4AAAAAAABAStAQg8AAAAAACJSIK2jKgKZku99RUvYr/AHzqWT1nPj+hvecVf72RtHuEQqARcgQGGk4l8vU8cv9/0hGn5wAFRnhTf+q+JoW7u81OmTD3gBIQEAAAEBK4CEHgAAAAAAIlIgXSlTzUHtqmuEXx6l1Z/kb/2D2SYQnUrcxGG6XOsANsMBFyCke/ZfAmyc5gGpiBlpCds3hRpLnV/2Hzk61UEewqT0UgEhAbwCIgBAoickg5ZfkojmcTEQZ2q1th8xcw1U2I1EK/Oy2NWWB00YM1TXJiY0UMyer7DhNE+Ex/tsj7/d3UuFQJR58MiU3gABASvAxi0AAAAAACJSIFotaPNMkc9c/GcUGzE26X40cN9ki/730mZdrF6WUFv9AQMEAQAAAAEXIGuak7DiSWaYNQnkB83yXQEetzW3JEKzyE8ABKoGbffrASEBvAAA</pre>
+* Case: <tt>PSBT_IN_CISA_HALFAGG_SIG</tt> with invalid value length
+** Base64 String: <pre>cHNidP8BALACAAAAA+nzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////wGYiVsAAAAAACJSILcdHrklCEkS2CeS2r1H1rhOzI0O2b7wdt952VTvWsO4AAAAAAABAStAQg8AAAAAACJSIK2jKgKZku99RUvYr/AHzqWT1nPj+hvecVf72RtHuEQqARcgQGGk4l8vU8cv9/0hGn5wAFRnhTf+q+JoW7u81OmTD3gBIQEAAAEBK4CEHgAAAAAAIlIgXSlTzUHtqmuEXx6l1Z/kb/2D2SYQnUrcxGG6XOsANsMBFyCke/ZfAmyc5gGpiBlpCds3hRpLnV/2Hzk61UEewqT0UgEhAbwBIj+iJySDll+SiOZxMRBnarW2HzFzDVTYjUQr87LY1ZYHTRgzVNcmJjRQzJ6vsOE0T4TH+2yPv93dS4VAlHnwyJQAAQErwMYtAAAAAAAiUiBaLWjzTJHPXPxnFBsxNul+NHDfZIv+99JmXaxellBb/QEDBAEAAAABFyBrmpOw4klmmDUJ5AfN8l0BHrc1tyRCs8hPAASqBm336wEhAbwAAA==</pre>
+* Case: <tt>PSBT_IN_CISA_FULLAGG_PUB_NONCE</tt> with invalid value length
+** Base64 String: <pre>cHNidP8BALACAAAAA+nzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////wGYiVsAAAAAACJSILcdHrklCEkS2CeS2r1H1rhOzI0O2b7wdt952VTvWsO4AAAAAAABAStAQg8AAAAAACJSIK2jKgKZku99RUvYr/AHzqWT1nPj+hvecVf72RtHuEQqARcgQGGk4l8vU8cv9/0hGn5wAFRnhTf+q+JoW7u81OmTD3gBIQEAAAEBK4CEHgAAAAAAIlIgXSlTzUHtqmuEXx6l1Z/kb/2D2SYQnUrcxGG6XOsANsMBFyCke/ZfAmyc5gGpiBlpCds3hRpLnV/2Hzk61UEewqT0UgEhAbwBI0ED6JxnPk2WqxqD/hd9r/lnHIgHTqJhiVcQpuc+7ofIe4YCVr1c5Ch+roEdeS5jA1WAR6rMo8a/K/UQ5GzR9mfiawABASvAxi0AAAAAACJSIFotaPNMkc9c/GcUGzE26X40cN9ki/730mZdrF6WUFv9AQMEAQAAAAEXIGuak7DiSWaYNQnkB83yXQEetzW3JEKzyE8ABKoGbffrASEBvAAA</pre>
+* Case: <tt>PSBT_IN_CISA_FULLAGG_PARTIAL_SIG</tt> with invalid value length
+** Base64 String: <pre>cHNidP8BALACAAAAA+nzRWpGuA5nRR9a2aOVOW8ko6g5kJhibk/Zy7l1OO24AAAAAAD/////R0oakAQJxzEqoYcd2kuKP8nNOAURw3fcSPWanA4PhFUAAAAAAP////9BXNM/Ukj+1RJmHEZNT/03MwMidOUBLhfYNGBzvubgHwAAAAAA/////wGYiVsAAAAAACJSILcdHrklCEkS2CeS2r1H1rhOzI0O2b7wdt952VTvWsO4AAAAAAABAStAQg8AAAAAACJSIK2jKgKZku99RUvYr/AHzqWT1nPj+hvecVf72RtHuEQqARcgQGGk4l8vU8cv9/0hGn5wAFRnhTf+q+JoW7u81OmTD3gBIQEAAAEBK4CEHgAAAAAAIlIgXSlTzUHtqmuEXx6l1Z/kb/2D2SYQnUrcxGG6XOsANsMBFyCke/ZfAmyc5gGpiBlpCds3hRpLnV/2Hzk61UEewqT0UgEhAbwBJB8YVd880ddygYalJSbpl5bCr+M7bfZqG3afpS0dTYB6AAEBK8DGLQAAAAAAIlIgWi1o80yRz1z8ZxQbMTbpfjRw32SL/vfSZl2sXpZQW/0BAwQBAAAAARcga5qTsOJJZpg1CeQHzfJdAR63NbckQrPITwAEqgZt9+sBIQG8AAA=</pre>
+
+== Reference implementation ==
+
+TODO
