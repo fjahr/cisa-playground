@@ -113,6 +113,7 @@ An aggregation group is complete when all of its inputs are complete.
 
 The Updater sets <tt>PSBT_IN_CISA_MODE</tt> for every witness version 2 input that should take part in aggregation.
 It can set the field to <tt>0x00</tt> to record that an input must not be aggregated.
+It must not set or change the mode of an input that already carries a signature, a public nonce, or a partial signature.
 
 === Signer ===
 
@@ -123,6 +124,8 @@ For a half-aggregation input, the Signer creates a BIP 340 signature over the ha
 
 For a full-aggregation input, the Signer takes part in the signing protocol of BIP 459, with the PSBT taking the place of the coordinator.
 If the input has no <tt>PSBT_IN_CISA_FULLAGG_PUB_NONCE</tt>, the Signer runs ''NonceGen'' and adds the public nonce in this field.
+A full-aggregation input with a sighash type other than <tt>SIGHASH_DEFAULT</tt> must carry <tt>PSBT_IN_SIGHASH_TYPE</tt> before its public nonce is added.
+Every signer computes the messages of all inputs of the group, and the partial signature does not encode the sighash type.
 Once every input of the group has a public nonce, the Signer runs ''NonceAgg'' and ''Sign'' with the public nonces from the PSBT and the public keys and messages of the group as described in the Signing section of BIP 460.
 It adds the partial signature in <tt>PSBT_IN_CISA_FULLAGG_PARTIAL_SIG</tt>.
 '''Improper nonce usage can compromise private keys''', see BIP 459 for the requirements on nonce generation and usage.
@@ -133,11 +136,12 @@ Full-aggregation inputs with a MuSig2 aggregate output key are not covered by th
 
 === Combiner ===
 
-A Combiner must fail when the PSBTs contain different public nonces or different partial signatures for the same input, since they belong to different signing sessions.
+A Combiner must fail when the PSBTs contain different aggregation modes, public nonces, or partial signatures for the same input, since such PSBTs do not belong to the same signing session.
 
 === Input Finalizer ===
 
 An aggregated input is finalized together with the other inputs of its group, which requires the group to be complete.
+To compute the messages and construct the witnesses, the Finalizer needs the witness UTXOs of all inputs and the sighash types of all inputs of the group.
 The Finalizer first verifies every individual signature of the group, half-aggregation signatures with BIP 340 and partial signatures with ''PartialSigVerify'' of BIP 459, since the aggregation algorithms do not validate their inputs, see the Signing section of BIP 460.
 It then computes the aggregate signature with ''Aggregate'' of BIP 458 or ''SigAgg'' of BIP 459 and constructs <tt>PSBT_IN_FINAL_SCRIPTWITNESS</tt> for every input of the group as specified in BIP 460.
 An aggregated input that carries <tt>PSBT_IN_TAP_KEY_SIG</tt> must not be finalized, since that signature was created over the message of an opted-out input.
